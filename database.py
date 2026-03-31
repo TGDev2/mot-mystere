@@ -2,14 +2,16 @@ from contextlib import closing
 from pathlib import Path
 import sqlite3
 
+from app_paths import get_database_path
 
-DEFAULT_DB_PATH = Path(__file__).with_name("hangman.db")
+
+DEFAULT_DB_PATH = get_database_path()
 
 
 def normalize_player_name(name):
     normalized = " ".join(str(name).split())
     if not normalized:
-        raise ValueError("Le pseudo ne peut pas être vide.")
+        raise ValueError("Le pseudo ne peut pas etre vide.")
     return normalized[:24]
 
 
@@ -18,6 +20,7 @@ def _connect(db_path=DEFAULT_DB_PATH):
     database_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(database_path))
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -36,10 +39,50 @@ def setup_database(db_path=DEFAULT_DB_PATH):
                 best_score INTEGER NOT NULL DEFAULT 0,
                 last_score INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS game_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                difficulty TEXT NOT NULL,
+                secret_word TEXT NOT NULL,
+                won INTEGER NOT NULL,
+                end_reason TEXT NOT NULL,
+                attempts_left INTEGER NOT NULL DEFAULT 0,
+                time_remaining INTEGER NOT NULL DEFAULT 0,
+                word_complexity INTEGER NOT NULL DEFAULT 0,
+                score_earned INTEGER NOT NULL DEFAULT 0,
+                played_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_game_history_player_id
+            ON game_history (player_id, id DESC);
             """
         )
+        _ensure_game_history_columns(cursor)
         _migrate_legacy_stats(cursor)
         conn.commit()
+
+
+def _ensure_game_history_columns(cursor):
+    existing_columns = {
+        row["name"] for row in cursor.execute("PRAGMA table_info(game_history)").fetchall()
+    }
+    if not existing_columns:
+        return
+
+    required_columns = {
+        "attempts_left": "INTEGER NOT NULL DEFAULT 0",
+        "time_remaining": "INTEGER NOT NULL DEFAULT 0",
+        "word_complexity": "INTEGER NOT NULL DEFAULT 0",
+        "score_earned": "INTEGER NOT NULL DEFAULT 0",
+        "played_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    }
+
+    for column_name, definition in required_columns.items():
+        if column_name not in existing_columns:
+            cursor.execute(f"ALTER TABLE game_history ADD COLUMN {column_name} {definition}")
 
 
 def _migrate_legacy_stats(cursor):
@@ -117,6 +160,15 @@ def _row_to_player(row):
     return player
 
 
+def _row_to_history(row):
+    if row is None:
+        return None
+
+    history = dict(row)
+    history["won"] = bool(history["won"])
+    return history
+
+
 def get_or_create_player(name, db_path=DEFAULT_DB_PATH):
     normalized_name = normalize_player_name(name)
     with closing(_connect(db_path)) as conn:
@@ -136,7 +188,20 @@ def get_player(player_id, db_path=DEFAULT_DB_PATH):
     return _row_to_player(row)
 
 
-def record_game_result(player_id, won, score_earned, db_path=DEFAULT_DB_PATH):
+def record_game_result(
+    player_id,
+    won,
+    score_earned,
+    *,
+    category=None,
+    difficulty=None,
+    secret_word=None,
+    end_reason=None,
+    attempts_left=None,
+    time_remaining=None,
+    word_complexity=None,
+    db_path=DEFAULT_DB_PATH,
+):
     score_earned = max(0, int(score_earned))
     wins = 1 if won else 0
     losses = 0 if won else 1
@@ -158,6 +223,46 @@ def record_game_result(player_id, won, score_earned, db_path=DEFAULT_DB_PATH):
             """,
             (wins, losses, score_earned, score_earned, score_earned, score_earned, player_id),
         )
+
+        metadata = (
+            category,
+            difficulty,
+            secret_word,
+            end_reason,
+            attempts_left,
+            time_remaining,
+        )
+        if all(value is not None for value in metadata):
+            conn.execute(
+                """
+                INSERT INTO game_history (
+                    player_id,
+                    category,
+                    difficulty,
+                    secret_word,
+                    won,
+                    end_reason,
+                    attempts_left,
+                    time_remaining,
+                    word_complexity,
+                    score_earned
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    player_id,
+                    str(category),
+                    str(difficulty),
+                    str(secret_word),
+                    wins,
+                    str(end_reason),
+                    max(0, int(attempts_left)),
+                    max(0, int(time_remaining)),
+                    max(0, int(word_complexity or 0)),
+                    score_earned,
+                ),
+            )
+
         conn.commit()
 
     return get_player(player_id, db_path=db_path)
@@ -192,3 +297,118 @@ def get_leaderboard_data(limit=10, db_path=DEFAULT_DB_PATH):
         ).fetchall()
 
     return [_row_to_player(row) for row in rows]
+
+
+def get_recent_games(player_id, limit=8, db_path=DEFAULT_DB_PATH):
+    with closing(_connect(db_path)) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                id,
+                category,
+                difficulty,
+                secret_word,
+                won,
+                end_reason,
+                attempts_left,
+                time_remaining,
+                word_complexity,
+                score_earned,
+                played_at
+            FROM game_history
+            WHERE player_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (player_id, limit),
+        ).fetchall()
+
+    return [_row_to_history(row) for row in rows]
+
+
+def get_player_dashboard(player_id, db_path=DEFAULT_DB_PATH):
+    player = get_player(player_id, db_path=db_path)
+    if player is None:
+        return None
+
+    with closing(_connect(db_path)) as conn:
+        overview = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS games_recorded,
+                COALESCE(ROUND(AVG(score_earned), 1), 0) AS average_score,
+                COALESCE(MAX(score_earned), 0) AS peak_round_score
+            FROM game_history
+            WHERE player_id = ?
+            """,
+            (player_id,),
+        ).fetchone()
+        recent_form = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS recent_games,
+                COALESCE(SUM(won), 0) AS recent_wins
+            FROM (
+                SELECT won
+                FROM game_history
+                WHERE player_id = ?
+                ORDER BY id DESC
+                LIMIT 5
+            )
+            """,
+            (player_id,),
+        ).fetchone()
+        best_difficulty = conn.execute(
+            """
+            SELECT
+                difficulty,
+                COUNT(*) AS games_played,
+                ROUND(AVG(score_earned), 1) AS average_score,
+                ROUND(SUM(won) * 100.0 / COUNT(*), 1) AS win_rate
+            FROM game_history
+            WHERE player_id = ?
+            GROUP BY difficulty
+            ORDER BY average_score DESC, win_rate DESC, games_played DESC, difficulty ASC
+            LIMIT 1
+            """,
+            (player_id,),
+        ).fetchone()
+        favorite_category = conn.execute(
+            """
+            SELECT
+                category,
+                COUNT(*) AS games_played,
+                ROUND(SUM(won) * 100.0 / COUNT(*), 1) AS win_rate
+            FROM game_history
+            WHERE player_id = ?
+            GROUP BY category
+            ORDER BY games_played DESC, win_rate DESC, category ASC
+            LIMIT 1
+            """,
+            (player_id,),
+        ).fetchone()
+        weakest_category = conn.execute(
+            """
+            SELECT
+                category,
+                COUNT(*) AS games_played,
+                ROUND(AVG(score_earned), 1) AS average_score,
+                ROUND(SUM(won) * 100.0 / COUNT(*), 1) AS win_rate
+            FROM game_history
+            WHERE player_id = ?
+            GROUP BY category
+            ORDER BY win_rate ASC, games_played DESC, average_score ASC, category ASC
+            LIMIT 1
+            """,
+            (player_id,),
+        ).fetchone()
+
+    return {
+        "player": player,
+        "overview": dict(overview),
+        "recent_form": dict(recent_form),
+        "best_difficulty": dict(best_difficulty) if best_difficulty else None,
+        "favorite_category": dict(favorite_category) if favorite_category else None,
+        "weakest_category": dict(weakest_category) if weakest_category else None,
+        "recent_games": get_recent_games(player_id, db_path=db_path),
+    }

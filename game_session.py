@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 import random
 
-from scoring import TIME_LIMIT_SECONDS, get_attempts_for_difficulty
+from categories import WordProfile, get_words_for_difficulty
+from scoring import get_attempts_for_difficulty, get_time_limit_for_difficulty
 
 
 @dataclass
@@ -18,30 +19,34 @@ class GameSession:
     category: str
     difficulty: str
     secret_word: str
+    word_profile: WordProfile
     attempts_left: int
-    time_limit: int = TIME_LIMIT_SECONDS
-    time_remaining: int = TIME_LIMIT_SECONDS
+    time_limit: int
+    time_remaining: int
     guessed_letters: set[str] = field(default_factory=set)
 
     @classmethod
     def create(cls, categories, category, difficulty, rng=None):
         if category not in categories:
-            raise ValueError("La catégorie demandée est introuvable.")
+            raise ValueError("La categorie demandee est introuvable.")
 
         words = categories[category]
         if not words:
-            raise ValueError("La catégorie ne contient aucun mot.")
+            raise ValueError("La categorie ne contient aucun mot.")
 
         random_source = rng or random
-        secret_word = random_source.choice(words).upper()
+        available_words = get_words_for_difficulty(words, difficulty)
+        selected_profile = random_source.choice(available_words)
         attempts_left = get_attempts_for_difficulty(difficulty)
+        time_limit = get_time_limit_for_difficulty(difficulty)
         return cls(
             category=category,
             difficulty=difficulty,
-            secret_word=secret_word,
+            secret_word=selected_profile.text,
+            word_profile=selected_profile,
             attempts_left=attempts_left,
-            time_limit=TIME_LIMIT_SECONDS,
-            time_remaining=TIME_LIMIT_SECONDS,
+            time_limit=time_limit,
+            time_remaining=time_limit,
         )
 
     @property
@@ -55,6 +60,10 @@ class GameSession:
     @property
     def letters_tried(self):
         return sorted(self.guessed_letters)
+
+    @property
+    def word_complexity(self):
+        return self.word_profile.complexity
 
     @property
     def is_won(self):

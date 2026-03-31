@@ -1,11 +1,24 @@
 import unittest
 
 from game_session import GameSession
+from scoring import get_time_limit_for_difficulty
+
+
+class FixedChoice:
+    def choice(self, values):
+        return values[0]
 
 
 class GameSessionTestCase(unittest.TestCase):
     def setUp(self):
-        self.categories = {"animaux": ["CHAT"]}
+        self.categories = {"animaux": ["CHAT", "RUGBY", "KAZAKHSTAN"]}
+
+    def test_selected_difficulty_chooses_matching_word_pool(self):
+        session = GameSession.create(self.categories, "animaux", "Moyen", rng=FixedChoice())
+
+        self.assertEqual(session.secret_word, "RUGBY")
+        self.assertEqual(session.word_profile.difficulty, "Moyen")
+        self.assertEqual(session.time_limit, get_time_limit_for_difficulty("Moyen"))
 
     def test_correct_guess_reveals_letter(self):
         session = GameSession.create(self.categories, "animaux", "Facile")

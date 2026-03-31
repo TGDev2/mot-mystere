@@ -1,7 +1,14 @@
 import unittest
 from pathlib import Path
 
-from database import get_leaderboard_data, get_or_create_player, record_game_result, setup_database
+from database import (
+    get_leaderboard_data,
+    get_or_create_player,
+    get_player_dashboard,
+    get_recent_games,
+    record_game_result,
+    setup_database,
+)
 
 
 class DatabaseTestCase(unittest.TestCase):
@@ -19,15 +26,31 @@ class DatabaseTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             get_or_create_player("   ", db_path=self.db_path)
 
-    def test_record_game_result_updates_progression(self):
+    def test_record_game_result_updates_progression_and_history(self):
         player = get_or_create_player("Theo", db_path=self.db_path)
 
-        updated = record_game_result(player["id"], won=True, score_earned=180, db_path=self.db_path)
+        updated = record_game_result(
+            player["id"],
+            won=True,
+            score_earned=180,
+            category="animaux",
+            difficulty="Facile",
+            secret_word="CHAT",
+            end_reason="won",
+            attempts_left=8,
+            time_remaining=50,
+            word_complexity=20,
+            db_path=self.db_path,
+        )
+        recent_games = get_recent_games(player["id"], db_path=self.db_path)
 
         self.assertEqual(updated["games_played"], 1)
         self.assertEqual(updated["games_won"], 1)
         self.assertEqual(updated["score_total"], 180)
         self.assertEqual(updated["best_score"], 180)
+        self.assertEqual(len(recent_games), 1)
+        self.assertEqual(recent_games[0]["category"], "animaux")
+        self.assertEqual(recent_games[0]["difficulty"], "Facile")
 
     def test_leaderboard_sorts_by_total_score(self):
         alice = get_or_create_player("Alice", db_path=self.db_path)
@@ -40,6 +63,43 @@ class DatabaseTestCase(unittest.TestCase):
 
         self.assertEqual(leaderboard[0]["name"], "Bob")
         self.assertEqual(leaderboard[1]["name"], "Alice")
+
+    def test_dashboard_exposes_progression_insights(self):
+        player = get_or_create_player("Alice", db_path=self.db_path)
+        record_game_result(
+            player["id"],
+            won=True,
+            score_earned=210,
+            category="animaux",
+            difficulty="Facile",
+            secret_word="CHAT",
+            end_reason="won",
+            attempts_left=9,
+            time_remaining=55,
+            word_complexity=20,
+            db_path=self.db_path,
+        )
+        record_game_result(
+            player["id"],
+            won=False,
+            score_earned=0,
+            category="pays",
+            difficulty="Difficile",
+            secret_word="KAZAKHSTAN",
+            end_reason="attempts",
+            attempts_left=0,
+            time_remaining=14,
+            word_complexity=47,
+            db_path=self.db_path,
+        )
+
+        dashboard = get_player_dashboard(player["id"], db_path=self.db_path)
+
+        self.assertEqual(dashboard["overview"]["games_recorded"], 2)
+        self.assertEqual(dashboard["best_difficulty"]["difficulty"], "Facile")
+        self.assertEqual(dashboard["favorite_category"]["category"], "animaux")
+        self.assertEqual(dashboard["weakest_category"]["category"], "pays")
+        self.assertEqual(dashboard["recent_games"][0]["difficulty"], "Difficile")
 
 
 if __name__ == "__main__":
