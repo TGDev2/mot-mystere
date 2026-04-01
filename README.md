@@ -10,10 +10,12 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 
 - Parcours solo clair : pseudo, categorie, difficulte, partie, rejouabilite.
 - Calibration des manches par niveau de difficulte, longueur, lettres rares et repetition.
+- Niveaux affiches uniquement lorsqu'un vrai pool de mots est disponible pour tenir la promesse.
 - Timer et nombre d'essais differencies selon la difficulte.
 - Score persistant aligne sur la difficulte, la complexite du mot, le temps et les essais conserves.
 - Profil joueur avec historique recent, niveau le plus rentable, categorie la plus jouee et categorie a travailler.
 - Classement local persistant avec score total, meilleur score et taux de victoire.
+- Saisie clavier A-Z active pendant la partie et ecran de fin de manche plus direct pour rejouer.
 - Mode multijoueur conserve a titre experimental dans `server.py`.
 
 ## Lancer le jeu
@@ -42,7 +44,13 @@ PyInstaller est deja supporte dans le depot via `motmystere.spec`.
 .\build_windows.ps1
 ```
 
-Le script valide d'abord que l'installation Python dispose bien de Tkinter/Tcl.
+Le script :
+
+1. verifie d'abord que l'installation Python dispose bien de Tkinter/Tcl ;
+2. lance la suite de tests unitaires ;
+3. execute un smoke test source ;
+4. build l'executable ;
+5. rejoue le smoke test sur `dist\MotMystere.exe`.
 
 Le binaire genere est :
 
@@ -68,6 +76,12 @@ Variables d'environnement utiles :
 python -m unittest discover -s tests
 ```
 
+Pour verifier rapidement le parcours critique sans ouvrir l'interface :
+
+```bash
+python main.py --smoke-test
+```
+
 ## Structure
 
 - `main.py` : point d'entree de l'application
@@ -76,6 +90,7 @@ python -m unittest discover -s tests
 - `categories.py` : chargement des categories et calibration des mots
 - `scoring.py` : configuration de difficulte et calcul du score
 - `database.py` : persistance SQLite, historique et classement
+- `release_smoke.py` : verification smoke test du parcours critique
 - `build_windows.ps1` / `motmystere.spec` : build Windows du jeu
 
 ## Positionnement actuel

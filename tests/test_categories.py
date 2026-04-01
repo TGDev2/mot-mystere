@@ -1,6 +1,13 @@
 import unittest
 
-from categories import build_word_profile, get_category_difficulty_breakdown, get_words_for_difficulty
+from categories import (
+    DIFFICULTY_LEVELS,
+    build_word_profile,
+    get_category_difficulty_breakdown,
+    get_supported_difficulties,
+    get_words_for_difficulty,
+    load_categories,
+)
 
 
 class CategoriesTestCase(unittest.TestCase):
@@ -25,6 +32,21 @@ class CategoriesTestCase(unittest.TestCase):
             breakdown,
             {"Facile": 1, "Moyen": 1, "Difficile": 1},
         )
+
+    def test_supported_difficulties_require_minimum_pool_size(self):
+        supported = get_supported_difficulties(self.words)
+
+        self.assertEqual(supported, ())
+
+    def test_repository_categories_cover_all_difficulties_for_distribution(self):
+        categories = load_categories()
+
+        for category, words in categories.items():
+            self.assertEqual(
+                get_supported_difficulties(words),
+                DIFFICULTY_LEVELS,
+                msg=f"{category} ne couvre plus tous les niveaux garantis.",
+            )
 
 
 if __name__ == "__main__":

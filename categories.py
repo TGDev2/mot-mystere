@@ -11,6 +11,7 @@ DIFFICULTY_LEVELS = ("Facile", "Moyen", "Difficile")
 EASY_COMPLEXITY_MAX = 27
 MEDIUM_COMPLEXITY_MAX = 34
 RARE_LETTERS = frozenset("KQWXYZJ")
+MIN_WORD_POOL_SIZE = 5
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,15 @@ def lire_mots(nom_fichier):
         fichier = Path(BASE_DIR) / fichier
 
     with fichier.open("r", encoding="utf-8") as handle:
-        return [mot.strip().upper() for mot in handle if mot.strip()]
+        words = []
+        seen = set()
+        for mot in handle:
+            normalized = mot.strip().upper()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            words.append(normalized)
+        return words
 
 
 def calculate_word_complexity(word):
@@ -85,13 +94,21 @@ def get_words_for_difficulty(words, difficulty):
         raise ValueError(f"Difficulte inconnue: {difficulty}")
 
     profiles = get_word_profiles(words)
-    matching_profiles = [profile for profile in profiles if profile.difficulty == difficulty]
-    return matching_profiles or profiles
+    return [profile for profile in profiles if profile.difficulty == difficulty]
 
 
 def get_category_difficulty_breakdown(words):
     counter = Counter(profile.difficulty for profile in get_word_profiles(words))
     return {level: counter.get(level, 0) for level in DIFFICULTY_LEVELS}
+
+
+def get_supported_difficulties(words, minimum_pool_size=MIN_WORD_POOL_SIZE):
+    breakdown = get_category_difficulty_breakdown(words)
+    return tuple(
+        level
+        for level in DIFFICULTY_LEVELS
+        if breakdown.get(level, 0) >= int(minimum_pool_size)
+    )
 
 
 def load_categories(base_dir=BASE_DIR):

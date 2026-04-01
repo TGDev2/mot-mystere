@@ -1,11 +1,20 @@
-from tkinter import TclError
+import sys
 
 from database import setup_database
-from game_logic import HangmanApp
+from release_smoke import run_release_smoke_test
 
 
-def main():
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--smoke-test" in args:
+        run_release_smoke_test()
+        return
+
     setup_database()
+    from tkinter import TclError
+
+    from game_logic import HangmanApp
+
     try:
         app = HangmanApp()
     except TclError as exc:

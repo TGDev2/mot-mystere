@@ -1,8 +1,14 @@
+from collections import defaultdict
 from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox
 
-from categories import get_category_difficulty_breakdown, load_categories
+from categories import (
+    MIN_WORD_POOL_SIZE,
+    get_category_difficulty_breakdown,
+    get_supported_difficulties,
+    load_categories,
+)
 from database import (
     get_leaderboard_data,
     get_or_create_player,
@@ -10,7 +16,10 @@ from database import (
     record_game_result,
 )
 from game_session import GameSession
-from scoring import DIFFICULTY_CONFIG, build_score_breakdown
+from scoring import build_score_breakdown
+
+
+RECENT_WORD_MEMORY = 3
 
 
 def format_category_name(category_key):
@@ -39,9 +48,22 @@ def format_played_at(value):
 
 class HangmanApp:
     def __init__(self):
-        self.categories = load_categories()
+        loaded_categories = load_categories()
+        self.category_availability = {
+            key: get_supported_difficulties(words)
+            for key, words in loaded_categories.items()
+        }
+        self.categories = {
+            key: words
+            for key, words in loaded_categories.items()
+            if self.category_availability.get(key)
+        }
+        self.category_availability = {
+            key: self.category_availability[key]
+            for key in self.categories
+        }
         if not self.categories:
-            raise RuntimeError("Aucune categorie n'est disponible.")
+            raise RuntimeError("Aucune categorie exploitable n'est disponible.")
 
         self.root = tk.Tk()
         self.root.title("MotMystere")
@@ -52,14 +74,16 @@ class HangmanApp:
         self.session = None
         self.timer_job = None
         self.letter_buttons = {}
+        self.recent_words_by_selection = defaultdict(list)
         self.category_labels = {format_category_name(key): key for key in self.categories}
 
+        first_category = next(iter(self.categories))
+        first_difficulty = self.category_availability[first_category][0]
+
         self.player_name_var = tk.StringVar()
-        self.category_var = tk.StringVar(value=next(iter(self.categories)))
-        self.category_display_var = tk.StringVar(
-            value=format_category_name(self.category_var.get())
-        )
-        self.difficulty_var = tk.StringVar(value="Facile")
+        self.category_var = tk.StringVar(value=first_category)
+        self.category_display_var = tk.StringVar(value=format_category_name(first_category))
+        self.difficulty_var = tk.StringVar(value=first_difficulty)
         self.banner_var = tk.StringVar()
         self.word_var = tk.StringVar()
         self.tried_letters_var = tk.StringVar()
@@ -70,6 +94,9 @@ class HangmanApp:
         self.score_hint_var = tk.StringVar()
         self.category_hint_var = tk.StringVar()
         self.round_hint_var = tk.StringVar()
+
+        self.player_name_entry = None
+        self.difficulty_menu = None
 
         self.show_main_menu()
 
@@ -87,13 +114,14 @@ class HangmanApp:
 
     def clear_screen(self):
         self.cancel_timer()
+        self.root.unbind("<Return>")
+        self.root.unbind("<Key>")
         for widget in self.root.winfo_children():
             widget.destroy()
 
     def show_main_menu(self, banner_message=""):
         self.clear_screen()
         self.banner_var.set(banner_message)
-        self.update_category_hint()
 
         container = tk.Frame(self.root, padx=20, pady=20)
         container.pack()
@@ -101,11 +129,22 @@ class HangmanApp:
         tk.Label(container, text="MotMystere", font=("Arial", 22, "bold")).pack(pady=(0, 6))
         tk.Label(
             container,
-            text="Jeu solo calibre avec categories, score persistant et suivi joueur.",
+            text="Jeu solo calibre pour une demo rapide, avec progression persistante.",
             font=("Arial", 11),
-            wraplength=420,
+            wraplength=440,
             justify="center",
-        ).pack(pady=(0, 16))
+        ).pack(pady=(0, 12))
+
+        tk.Label(
+            container,
+            text=(
+                "Demarrage rapide : renseignez un pseudo puis appuyez sur Entree. "
+                "Pendant la partie, utilisez le clavier A-Z ou les boutons a l'ecran."
+            ),
+            fg="#555555",
+            wraplength=440,
+            justify="center",
+        ).pack(pady=(0, 14))
 
         if self.banner_var.get():
             tk.Label(
@@ -113,14 +152,15 @@ class HangmanApp:
                 textvariable=self.banner_var,
                 fg="#1f5c2e",
                 justify="left",
-                wraplength=420,
+                wraplength=440,
             ).pack(fill="x", pady=(0, 12))
 
         form = tk.Frame(container)
         form.pack(fill="x")
 
         tk.Label(form, text="Pseudo").grid(row=0, column=0, sticky="w", pady=6)
-        tk.Entry(form, textvariable=self.player_name_var, width=28).grid(row=0, column=1, pady=6)
+        self.player_name_entry = tk.Entry(form, textvariable=self.player_name_var, width=28)
+        self.player_name_entry.grid(row=0, column=1, pady=6)
 
         tk.Label(form, text="Categorie").grid(row=1, column=0, sticky="w", pady=6)
         self.category_display_var.set(format_category_name(self.category_var.get()))
@@ -132,19 +172,21 @@ class HangmanApp:
         ).grid(row=1, column=1, sticky="ew", pady=6)
 
         tk.Label(form, text="Difficulte").grid(row=2, column=0, sticky="w", pady=6)
-        tk.OptionMenu(
+        self.difficulty_menu = tk.OptionMenu(
             form,
             self.difficulty_var,
-            *DIFFICULTY_CONFIG.keys(),
+            self.difficulty_var.get(),
             command=self.on_difficulty_selected,
-        ).grid(row=2, column=1, sticky="ew", pady=6)
+        )
+        self.difficulty_menu.grid(row=2, column=1, sticky="ew", pady=6)
+        self.refresh_difficulty_options()
 
         tk.Label(
             container,
             textvariable=self.category_hint_var,
             fg="#1f3a93",
             justify="left",
-            wraplength=420,
+            wraplength=440,
         ).pack(fill="x", pady=(10, 10))
 
         tk.Label(
@@ -155,7 +197,7 @@ class HangmanApp:
             ),
             fg="#555555",
             justify="left",
-            wraplength=420,
+            wraplength=440,
         ).pack(fill="x", pady=(0, 10))
 
         if self.player is not None:
@@ -164,7 +206,7 @@ class HangmanApp:
                 container,
                 textvariable=self.progress_var,
                 justify="left",
-                wraplength=420,
+                wraplength=440,
             ).pack(fill="x", pady=(0, 12))
 
         buttons = tk.Frame(container)
@@ -184,26 +226,58 @@ class HangmanApp:
         )
         tk.Button(buttons, text="Quitter", command=self.close, width=12).pack(side="left")
 
+        self.player_name_entry.focus_set()
+        self.root.bind("<Return>", self.on_main_menu_return)
+        self.update_category_hint()
+
+    def on_main_menu_return(self, _event):
+        self.start_game()
+
     def on_category_selected(self, selected_display_name):
         if selected_display_name in self.category_labels:
             self.category_var.set(self.category_labels[selected_display_name])
+        self.refresh_difficulty_options()
         self.update_category_hint()
 
     def on_difficulty_selected(self, _selected_difficulty):
         self.update_category_hint()
 
+    def get_available_difficulties(self, category_key=None):
+        key = category_key or self.category_var.get()
+        return self.category_availability.get(key, tuple())
+
+    def refresh_difficulty_options(self):
+        available_difficulties = self.get_available_difficulties(self.category_var.get())
+        if not available_difficulties:
+            raise RuntimeError("La categorie selectionnee ne propose aucun niveau exploitable.")
+
+        if self.difficulty_var.get() not in available_difficulties:
+            self.difficulty_var.set(available_difficulties[0])
+
+        menu = self.difficulty_menu["menu"]
+        menu.delete(0, "end")
+        for difficulty in available_difficulties:
+            menu.add_command(
+                label=difficulty,
+                command=tk._setit(self.difficulty_var, difficulty, self.on_difficulty_selected),
+            )
+
     def update_category_hint(self):
-        if self.category_display_var.get() in self.category_labels:
-            self.category_var.set(self.category_labels[self.category_display_var.get()])
+        selected_display_name = self.category_display_var.get()
+        if selected_display_name in self.category_labels:
+            self.category_var.set(self.category_labels[selected_display_name])
 
         breakdown = get_category_difficulty_breakdown(self.categories[self.category_var.get()])
+        available_difficulties = self.get_available_difficulties(self.category_var.get())
         selected_difficulty = self.difficulty_var.get()
         total_words = sum(breakdown.values())
         selected_pool = breakdown.get(selected_difficulty, 0)
+        available_text = ", ".join(available_difficulties)
         self.category_hint_var.set(
             f"{format_category_name(self.category_var.get())} : {total_words} mots "
             f"(Facile {breakdown['Facile']}, Moyen {breakdown['Moyen']}, "
-            f"Difficile {breakdown['Difficile']}). Le niveau {selected_difficulty} "
+            f"Difficile {breakdown['Difficile']}). Niveaux garantis : {available_text} "
+            f"(au moins {MIN_WORD_POOL_SIZE} mots). Le niveau {selected_difficulty} "
             f"utilisera {selected_pool} mot(s) calibres."
         )
 
@@ -231,17 +305,62 @@ class HangmanApp:
 
         self.show_player_dashboard(player["id"])
 
+    def _get_recent_words(self, category, difficulty):
+        return list(self.recent_words_by_selection.get((category, difficulty), []))
+
+    def _remember_recent_word(self, category, difficulty, secret_word):
+        key = (category, difficulty)
+        history = self.recent_words_by_selection[key]
+        history.append(secret_word)
+        max_history = min(
+            RECENT_WORD_MEMORY,
+            max(1, get_category_difficulty_breakdown(self.categories[category])[difficulty] - 1),
+        )
+        if len(history) > max_history:
+            del history[: len(history) - max_history]
+
+    def _create_session_for_current_selection(self):
+        category = self.category_var.get()
+        difficulty = self.difficulty_var.get()
+        session = GameSession.create(
+            self.categories,
+            category,
+            difficulty,
+            recent_words=self._get_recent_words(category, difficulty),
+        )
+        self._remember_recent_word(category, difficulty, session.secret_word)
+        return session
+
     def start_game(self):
         player = self._load_player_from_form()
         if player is None:
             return
 
-        self.category_var.set(self.category_labels[self.category_display_var.get()])
-        self.session = GameSession.create(
-            self.categories,
-            self.category_var.get(),
-            self.difficulty_var.get(),
-        )
+        selected_display_name = self.category_display_var.get()
+        if selected_display_name in self.category_labels:
+            self.category_var.set(self.category_labels[selected_display_name])
+
+        try:
+            self.session = self._create_session_for_current_selection()
+        except ValueError as exc:
+            messagebox.showerror("Partie indisponible", str(exc))
+            self.refresh_difficulty_options()
+            self.update_category_hint()
+            return
+
+        self.show_game_screen()
+
+    def replay_current_selection(self):
+        if self.player is None:
+            self.show_main_menu()
+            return
+
+        try:
+            self.session = self._create_session_for_current_selection()
+        except ValueError as exc:
+            self.show_main_menu(banner_message=str(exc))
+            return
+
         self.show_game_screen()
 
     def show_game_screen(self):
@@ -263,11 +382,12 @@ class HangmanApp:
             f"complexite {self.session.word_complexity}, "
             f"timer {self.session.time_limit} s."
         )
+        tk.Label(container, textvariable=self.round_hint_var, fg="#555555").pack(pady=(0, 4))
         tk.Label(
             container,
-            textvariable=self.round_hint_var,
-            fg="#555555",
-        ).pack(pady=(0, 10))
+            text="Clavier actif : tapez une lettre A-Z ou cliquez sur les boutons.",
+            fg="#1f3a93",
+        ).pack(pady=(0, 12))
 
         tk.Label(container, textvariable=self.word_var, font=("Courier New", 24, "bold")).pack(
             pady=(0, 12)
@@ -280,7 +400,7 @@ class HangmanApp:
             container,
             textvariable=self.progress_var,
             justify="left",
-            wraplength=420,
+            wraplength=440,
         ).pack(pady=(0, 8))
         tk.Label(container, textvariable=self.status_var, fg="#444444").pack(pady=(0, 12))
 
@@ -299,7 +419,7 @@ class HangmanApp:
         actions = tk.Frame(container)
         actions.pack(fill="x", pady=(14, 0))
 
-        tk.Button(actions, text="Retour au menu", command=self.return_to_menu, width=16).pack(
+        tk.Button(actions, text="Changer de reglage", command=self.return_to_menu, width=18).pack(
             side="left",
             padx=(0, 8),
         )
@@ -313,7 +433,24 @@ class HangmanApp:
 
         self.status_var.set("Proposez une lettre.")
         self.refresh_game_view()
+        self.root.bind("<Key>", self.on_game_keypress)
         self.schedule_timer()
+
+    def on_game_keypress(self, event):
+        if self.session is None or self.session.status != "in_progress":
+            return
+
+        focused_widget = self.root.focus_get()
+        if focused_widget is not None and focused_widget.winfo_toplevel() is not self.root:
+            return
+
+        if event.keysym == "Escape":
+            self.return_to_menu()
+            return
+
+        letter = str(event.char or "").strip().upper()
+        if len(letter) == 1 and letter.isalpha():
+            self.handle_letter(letter)
 
     def refresh_game_view(self):
         self.word_var.set(self.session.revealed_word)
@@ -423,25 +560,82 @@ class HangmanApp:
             title = "Partie perdue"
             result_message = f"Vous n'avez plus d'essais. Le mot etait : {self.session.secret_word}."
 
-        message = (
-            f"{result_message}\n\n"
-            f"{score_summary}\n"
-            f"{self._build_player_summary(self.player)}\n\n"
-            "Rejouer avec le meme profil ?"
+        self.show_round_summary(title, result_message, score_summary)
+
+    def show_round_summary(self, title, result_message, score_summary):
+        self.clear_screen()
+
+        container = tk.Frame(self.root, padx=20, pady=20)
+        container.pack()
+
+        tk.Label(container, text=title, font=("Arial", 22, "bold")).pack(pady=(0, 6))
+        tk.Label(
+            container,
+            text=(
+                f"{format_category_name(self.session.category)} | "
+                f"{self.session.difficulty} | mot {self.session.secret_word}"
+            ),
+            fg="#555555",
+        ).pack(pady=(0, 12))
+
+        tk.Label(
+            container,
+            text=result_message,
+            wraplength=460,
+            justify="center",
+        ).pack(pady=(0, 8))
+        tk.Label(
+            container,
+            text=score_summary,
+            fg="#1f3a93",
+            wraplength=460,
+            justify="center",
+        ).pack(pady=(0, 8))
+        tk.Label(
+            container,
+            text=self._build_player_summary(self.player),
+            wraplength=460,
+            justify="center",
+        ).pack(pady=(0, 8))
+        tk.Label(
+            container,
+            text=(
+                "Suite logique : appuyez sur Entree pour rejouer avec le meme reglage, "
+                "ou choisissez une autre action."
+            ),
+            fg="#555555",
+            wraplength=460,
+            justify="center",
+        ).pack(pady=(0, 14))
+
+        buttons = tk.Frame(container)
+        buttons.pack(fill="x")
+
+        tk.Button(
+            buttons,
+            text="Rejouer meme reglage",
+            command=self.replay_current_selection,
+            width=20,
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            buttons,
+            text="Changer categorie",
+            command=self.return_to_menu,
+            width=18,
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(buttons, text="Profil", command=self.open_player_dashboard, width=14).pack(
+            side="left",
+            padx=(0, 8),
+        )
+        tk.Button(buttons, text="Classement", command=self.show_leaderboard, width=14).pack(
+            side="left"
         )
 
-        if messagebox.askyesno(title, message):
-            self.session = GameSession.create(
-                self.categories,
-                self.category_var.get(),
-                self.difficulty_var.get(),
-            )
-            self.show_game_screen()
-            return
+        footer = tk.Frame(container)
+        footer.pack(fill="x", pady=(14, 0))
+        tk.Button(footer, text="Quitter", command=self.close, width=12).pack()
 
-        self.show_main_menu(
-            banner_message=f"Dernier resultat : {result_message} {score_summary}"
-        )
+        self.root.bind("<Return>", lambda _event: self.replay_current_selection())
 
     def return_to_menu(self):
         self.show_main_menu()

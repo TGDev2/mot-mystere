@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 import random
 
-from categories import WordProfile, get_words_for_difficulty
+from categories import MIN_WORD_POOL_SIZE, WordProfile, get_supported_difficulties, get_words_for_difficulty
 from scoring import get_attempts_for_difficulty, get_time_limit_for_difficulty
 
 
@@ -26,7 +26,16 @@ class GameSession:
     guessed_letters: set[str] = field(default_factory=set)
 
     @classmethod
-    def create(cls, categories, category, difficulty, rng=None):
+    def create(
+        cls,
+        categories,
+        category,
+        difficulty,
+        rng=None,
+        *,
+        recent_words=None,
+        minimum_pool_size=MIN_WORD_POOL_SIZE,
+    ):
         if category not in categories:
             raise ValueError("La categorie demandee est introuvable.")
 
@@ -34,9 +43,22 @@ class GameSession:
         if not words:
             raise ValueError("La categorie ne contient aucun mot.")
 
+        supported_difficulties = get_supported_difficulties(words, minimum_pool_size)
+        if difficulty not in supported_difficulties:
+            available = ", ".join(supported_difficulties) or "aucun"
+            raise ValueError(
+                f"Le niveau {difficulty} n'est pas disponible pour cette categorie. "
+                f"Niveaux disponibles : {available}."
+            )
+
         random_source = rng or random
         available_words = get_words_for_difficulty(words, difficulty)
-        selected_profile = random_source.choice(available_words)
+        recent_word_set = {str(word).strip().upper() for word in (recent_words or ()) if str(word).strip()}
+        candidate_pool = [profile for profile in available_words if profile.text not in recent_word_set]
+        if not candidate_pool:
+            candidate_pool = available_words
+
+        selected_profile = random_source.choice(candidate_pool)
         attempts_left = get_attempts_for_difficulty(difficulty)
         time_limit = get_time_limit_for_difficulty(difficulty)
         return cls(
