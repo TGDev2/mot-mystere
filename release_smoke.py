@@ -1,8 +1,8 @@
 from pathlib import Path
+import tempfile
 
 from categories import load_categories
 from database import (
-    DEFAULT_DB_PATH,
     get_leaderboard_data,
     get_or_create_player,
     get_player_dashboard,
@@ -16,6 +16,10 @@ from scoring import build_score_breakdown
 class FixedChoice:
     def choice(self, values):
         return values[0]
+
+
+def get_default_smoke_db_path():
+    return Path(tempfile.gettempdir()) / "motmystere_smoke_runtime.db"
 
 
 def _play_winning_round(session):
@@ -47,8 +51,10 @@ def _play_losing_round(session):
         raise RuntimeError("Le smoke test n'a pas reussi a perdre une manche.")
 
 
-def run_release_smoke_test(db_path=DEFAULT_DB_PATH):
-    db_path = Path(db_path)
+def run_release_smoke_test(db_path=None):
+    db_path = Path(db_path or get_default_smoke_db_path())
+    if db_path.exists():
+        db_path.unlink()
     setup_database(db_path)
     if not db_path.exists():
         raise RuntimeError("La base locale n'a pas ete creee pendant le smoke test.")

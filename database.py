@@ -392,6 +392,7 @@ def get_player_dashboard(player_id, db_path=DEFAULT_DB_PATH):
             SELECT
                 category,
                 COUNT(*) AS games_played,
+                COALESCE(SUM(won), 0) AS wins,
                 ROUND(AVG(score_earned), 1) AS average_score,
                 ROUND(SUM(won) * 100.0 / COUNT(*), 1) AS win_rate
             FROM game_history
@@ -402,6 +403,36 @@ def get_player_dashboard(player_id, db_path=DEFAULT_DB_PATH):
             """,
             (player_id,),
         ).fetchone()
+        category_stats = conn.execute(
+            """
+            SELECT
+                category,
+                COUNT(*) AS games_played,
+                COALESCE(SUM(won), 0) AS wins,
+                ROUND(AVG(score_earned), 1) AS average_score,
+                ROUND(SUM(won) * 100.0 / COUNT(*), 1) AS win_rate
+            FROM game_history
+            WHERE player_id = ?
+            GROUP BY category
+            ORDER BY games_played DESC, wins DESC, category ASC
+            """,
+            (player_id,),
+        ).fetchall()
+        difficulty_stats = conn.execute(
+            """
+            SELECT
+                difficulty,
+                COUNT(*) AS games_played,
+                COALESCE(SUM(won), 0) AS wins,
+                ROUND(AVG(score_earned), 1) AS average_score,
+                ROUND(SUM(won) * 100.0 / COUNT(*), 1) AS win_rate
+            FROM game_history
+            WHERE player_id = ?
+            GROUP BY difficulty
+            ORDER BY games_played DESC, wins DESC, difficulty ASC
+            """,
+            (player_id,),
+        ).fetchall()
 
     return {
         "player": player,
@@ -410,5 +441,7 @@ def get_player_dashboard(player_id, db_path=DEFAULT_DB_PATH):
         "best_difficulty": dict(best_difficulty) if best_difficulty else None,
         "favorite_category": dict(favorite_category) if favorite_category else None,
         "weakest_category": dict(weakest_category) if weakest_category else None,
+        "category_stats": [dict(row) for row in category_stats],
+        "difficulty_stats": [dict(row) for row in difficulty_stats],
         "recent_games": get_recent_games(player_id, db_path=db_path),
     }

@@ -99,6 +99,8 @@ class DatabaseTestCase(unittest.TestCase):
         self.assertEqual(dashboard["best_difficulty"]["difficulty"], "Facile")
         self.assertEqual(dashboard["favorite_category"]["category"], "animaux")
         self.assertEqual(dashboard["weakest_category"]["category"], "pays")
+        self.assertEqual(dashboard["category_stats"][0]["category"], "animaux")
+        self.assertEqual(dashboard["difficulty_stats"][0]["difficulty"], "Facile")
         self.assertEqual(dashboard["recent_games"][0]["difficulty"], "Difficile")
 
 

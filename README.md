@@ -14,9 +14,9 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 - Timer et nombre d'essais differencies selon la difficulte.
 - Score persistant aligne sur la difficulte, la complexite du mot, le temps et les essais conserves.
 - Profil joueur avec historique recent, niveau le plus rentable, categorie la plus jouee et categorie a travailler.
+- Objectifs explicites avec prochain palier recommande sur l'accueil, en manche et en fin de partie.
 - Classement local persistant avec score total, meilleur score et taux de victoire.
-- Saisie clavier A-Z active pendant la partie et ecran de fin de manche plus direct pour rejouer.
-- Mode multijoueur conserve a titre experimental dans `server.py`.
+- Saisie clavier A-Z active pendant la partie et ecran de fin de manche oriente progression.
 
 ## Lancer le jeu
 
@@ -95,4 +95,6 @@ python main.py --smoke-test
 
 ## Positionnement actuel
 
-La version principale du projet assume un perimetre stable et demonstrable : un jeu solo propre, maintenable et defendable en portfolio. Le multijoueur n'est pas supprime, mais il n'est toujours pas presente comme une fonctionnalite prete.
+La version principale du projet assume un perimetre stable et demonstrable : un jeu solo propre, maintenable et defendable en portfolio.
+
+Le depot peut encore contenir du code d'exploration annexe, mais rien de tout cela ne fait partie de la proposition de valeur livree. La version a evaluer reste strictement le parcours solo local.

@@ -16,10 +16,25 @@ from database import (
     record_game_result,
 )
 from game_session import GameSession
+from progression import build_progression_snapshot, get_newly_completed_goals
 from scoring import build_score_breakdown
 
 
 RECENT_WORD_MEMORY = 3
+APP_BG = "#f3efe6"
+CARD_BG = "#fffdf9"
+HERO_BG = "#e8f0ff"
+MUTED_BG = "#f6f4ef"
+ACCENT_COLOR = "#204d9b"
+ACCENT_BORDER = "#9ab4e5"
+SUCCESS_COLOR = "#1f6b4f"
+SUCCESS_BG = "#e9f7f0"
+WARNING_COLOR = "#9a6a13"
+WARNING_BG = "#fff4da"
+ERROR_COLOR = "#8b2f2f"
+ERROR_BG = "#fdecec"
+TEXT_COLOR = "#1f2430"
+SUBTLE_TEXT = "#5b6270"
 
 
 def format_category_name(category_key):
@@ -68,6 +83,7 @@ class HangmanApp:
         self.root = tk.Tk()
         self.root.title("MotMystere")
         self.root.resizable(False, False)
+        self.root.configure(bg=APP_BG)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.player = None
@@ -97,6 +113,7 @@ class HangmanApp:
 
         self.player_name_entry = None
         self.difficulty_menu = None
+        self.primary_goal_snapshot = None
 
         self.show_main_menu()
 
@@ -119,103 +136,348 @@ class HangmanApp:
         for widget in self.root.winfo_children():
             widget.destroy()
 
+    def _frame(self, parent, *, bg=None, **kwargs):
+        return tk.Frame(parent, bg=bg or parent.cget("bg"), **kwargs)
+
+    def _label(self, parent, *, text=None, textvariable=None, bg=None, fg=TEXT_COLOR, **kwargs):
+        return tk.Label(
+            parent,
+            text=text,
+            textvariable=textvariable,
+            bg=bg or parent.cget("bg"),
+            fg=fg,
+            **kwargs,
+        )
+
+    def _card(self, parent, *, bg=CARD_BG, border=ACCENT_BORDER, padx=16, pady=16):
+        return tk.Frame(
+            parent,
+            bg=bg,
+            padx=padx,
+            pady=pady,
+            highlightthickness=1,
+            highlightbackground=border,
+            bd=0,
+        )
+
+    def _section_title(self, parent, text):
+        self._label(
+            parent,
+            text=text,
+            font=("Arial", 12, "bold"),
+        ).pack(anchor="w", pady=(0, 6))
+
+    def _render_bullets(self, parent, lines, *, fg=TEXT_COLOR, wraplength=320):
+        for line in lines:
+            self._label(
+                parent,
+                text=f"- {line}",
+                fg=fg,
+                wraplength=wraplength,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=2)
+
+    def _render_progress_bar(self, parent, ratio, *, fill=ACCENT_COLOR):
+        canvas = tk.Canvas(
+            parent,
+            width=220,
+            height=10,
+            bg=parent.cget("bg"),
+            highlightthickness=0,
+            bd=0,
+        )
+        canvas.pack(anchor="w", pady=(6, 0))
+        canvas.create_rectangle(0, 0, 220, 10, fill="#dbe3f2", outline="")
+        canvas.create_rectangle(
+            0,
+            0,
+            int(220 * max(0.0, min(1.0, ratio))),
+            10,
+            fill=fill,
+            outline="",
+        )
+
+    def _render_goal_cards(self, parent, goals, *, limit=3, compact=False):
+        for goal in goals[:limit]:
+            bg = SUCCESS_BG if goal["completed"] else CARD_BG
+            border = SUCCESS_COLOR if goal["completed"] else ACCENT_BORDER
+            card = self._card(parent, bg=bg, border=border, padx=12, pady=12)
+            card.pack(fill="x", pady=4)
+            self._label(
+                card,
+                text="Objectif atteint" if goal["completed"] else "Objectif actif",
+                fg=SUCCESS_COLOR if goal["completed"] else ACCENT_COLOR,
+                font=("Arial", 9, "bold"),
+            ).pack(anchor="w")
+            self._label(
+                card,
+                text=goal["title"],
+                font=("Arial", 11, "bold"),
+                wraplength=320 if compact else 420,
+                justify="left",
+            ).pack(anchor="w", pady=(2, 2))
+            self._label(
+                card,
+                text=goal["progress_text"],
+                font=("Arial", 10, "bold"),
+            ).pack(anchor="w")
+            self._render_progress_bar(
+                card,
+                goal["ratio"],
+                fill=SUCCESS_COLOR if goal["completed"] else ACCENT_COLOR,
+            )
+            self._label(
+                card,
+                text=goal["detail"],
+                fg=SUBTLE_TEXT,
+                wraplength=320 if compact else 420,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(6, 0))
+
+    def _render_metric_cards(self, parent, metrics):
+        row = self._frame(parent)
+        row.pack(fill="x", pady=(0, 8))
+        for index, metric in enumerate(metrics):
+            card = self._card(
+                row,
+                bg=metric.get("bg", CARD_BG),
+                border=metric.get("border", ACCENT_BORDER),
+                padx=12,
+                pady=10,
+            )
+            card.pack(side="left", fill="both", expand=True, padx=(0, 8 if index < len(metrics) - 1 else 0))
+            self._label(
+                card,
+                text=metric["label"],
+                fg=SUBTLE_TEXT,
+                font=("Arial", 9, "bold"),
+            ).pack(anchor="w")
+            self._label(
+                card,
+                text=metric["value"],
+                fg=metric.get("fg", TEXT_COLOR),
+                font=("Arial", 14, "bold"),
+            ).pack(anchor="w", pady=(2, 0))
+
+    def _get_progression_bundle(self):
+        if self.player is None:
+            return None, None
+
+        dashboard = get_player_dashboard(self.player["id"])
+        if dashboard is None:
+            return None, None
+
+        self.player = dashboard["player"]
+        self.player_name_var.set(self.player["name"])
+        self.progress_var.set(self._build_player_summary(self.player))
+        snapshot = build_progression_snapshot(self.player, dashboard, self.category_availability)
+        self.primary_goal_snapshot = snapshot
+        return dashboard, snapshot
+
+    def _sync_selection_from_goal(self, goal):
+        if not goal:
+            return
+
+        category = goal.get("category")
+        if category in self.categories:
+            self.category_var.set(category)
+            self.category_display_var.set(format_category_name(category))
+
+        self.refresh_difficulty_options()
+        available_difficulties = self.get_available_difficulties(self.category_var.get())
+        if goal.get("difficulty") in available_difficulties:
+            self.difficulty_var.set(goal["difficulty"])
+        else:
+            self.difficulty_var.set(available_difficulties[0])
+        self.update_category_hint()
+
+    def start_primary_goal(self):
+        if self.player is not None and self.primary_goal_snapshot is None:
+            _, self.primary_goal_snapshot = self._get_progression_bundle()
+
+        if self.primary_goal_snapshot and self.primary_goal_snapshot.get("primary_goal"):
+            self._sync_selection_from_goal(self.primary_goal_snapshot["primary_goal"])
+
+        self.start_game()
+
     def show_main_menu(self, banner_message=""):
         self.clear_screen()
         self.banner_var.set(banner_message)
 
-        container = tk.Frame(self.root, padx=20, pady=20)
-        container.pack()
+        _, progression = self._get_progression_bundle() if self.player is not None else (None, None)
+        container = self._frame(self.root, bg=APP_BG, padx=24, pady=24)
+        container.pack(fill="both", expand=True)
 
-        tk.Label(container, text="MotMystere", font=("Arial", 22, "bold")).pack(pady=(0, 6))
-        tk.Label(
-            container,
-            text="Jeu solo calibre pour une demo rapide, avec progression persistante.",
-            font=("Arial", 11),
-            wraplength=440,
-            justify="center",
-        ).pack(pady=(0, 12))
-
-        tk.Label(
-            container,
+        hero = self._card(container, bg=HERO_BG, border=ACCENT_BORDER, padx=20, pady=18)
+        hero.pack(fill="x")
+        self._label(
+            hero,
+            text="MotMystere",
+            bg=HERO_BG,
+            font=("Georgia", 24, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            hero,
             text=(
-                "Demarrage rapide : renseignez un pseudo puis appuyez sur Entree. "
-                "Pendant la partie, utilisez le clavier A-Z ou les boutons a l'ecran."
+                "Version solo desktop pensee pour une demo rapide : choix clair, manche lisible, "
+                "score persistant et prochain objectif visible sans explication externe."
             ),
-            fg="#555555",
-            wraplength=440,
-            justify="center",
-        ).pack(pady=(0, 14))
+            bg=HERO_BG,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(6, 10))
+
+        badges = self._frame(hero, bg=HERO_BG)
+        badges.pack(fill="x")
+        badge_texts = [
+            f"{len(self.categories)} categories jouables",
+            f"{len({value for values in self.category_availability.values() for value in values})} niveaux calibres",
+            "score + profil + classement persistants",
+        ]
+        for index, text in enumerate(badge_texts):
+            pill = self._card(badges, bg="#f9fbff", border="#c7d5ef", padx=12, pady=8)
+            pill.pack(side="left", padx=(0, 8 if index < len(badge_texts) - 1 else 0))
+            self._label(
+                pill,
+                text=text,
+                bg="#f9fbff",
+                fg=ACCENT_COLOR,
+                font=("Arial", 9, "bold"),
+            ).pack()
+
+        body = self._frame(container, bg=APP_BG)
+        body.pack(fill="x", pady=(16, 0))
+
+        left = self._card(body, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        left.pack(side="left", fill="both", expand=True)
+        right = self._card(body, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
+        right.pack(side="left", fill="both", padx=(14, 0))
+
+        self._section_title(left, "Lancer une manche")
+        self._label(
+            left,
+            text=(
+                "Entrez un pseudo, choisissez une categorie et un niveau, puis lancez la manche. "
+                "La selection reste simple, mais les resultats et objectifs sont conserves."
+            ),
+            fg=SUBTLE_TEXT,
+            wraplength=360,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(0, 12))
 
         if self.banner_var.get():
-            tk.Label(
-                container,
+            banner = self._card(left, bg=SUCCESS_BG, border=SUCCESS_COLOR, padx=12, pady=10)
+            banner.pack(fill="x", pady=(0, 12))
+            self._label(
+                banner,
                 textvariable=self.banner_var,
-                fg="#1f5c2e",
+                bg=SUCCESS_BG,
+                fg=SUCCESS_COLOR,
+                wraplength=340,
                 justify="left",
-                wraplength=440,
-            ).pack(fill="x", pady=(0, 12))
+            ).pack(anchor="w")
 
-        form = tk.Frame(container)
+        form = self._frame(left)
         form.pack(fill="x")
-
-        tk.Label(form, text="Pseudo").grid(row=0, column=0, sticky="w", pady=6)
+        self._label(form, text="Pseudo").grid(row=0, column=0, sticky="w", pady=6)
         self.player_name_entry = tk.Entry(form, textvariable=self.player_name_var, width=28)
-        self.player_name_entry.grid(row=0, column=1, pady=6)
-
-        tk.Label(form, text="Categorie").grid(row=1, column=0, sticky="w", pady=6)
+        self.player_name_entry.grid(row=0, column=1, sticky="ew", pady=6)
+        self._label(form, text="Categorie").grid(row=1, column=0, sticky="w", pady=6)
         self.category_display_var.set(format_category_name(self.category_var.get()))
-        tk.OptionMenu(
+        category_menu = tk.OptionMenu(
             form,
             self.category_display_var,
             *self.category_labels.keys(),
             command=self.on_category_selected,
-        ).grid(row=1, column=1, sticky="ew", pady=6)
-
-        tk.Label(form, text="Difficulte").grid(row=2, column=0, sticky="w", pady=6)
+        )
+        category_menu.config(width=22)
+        category_menu.grid(row=1, column=1, sticky="ew", pady=6)
+        self._label(form, text="Difficulte").grid(row=2, column=0, sticky="w", pady=6)
         self.difficulty_menu = tk.OptionMenu(
             form,
             self.difficulty_var,
             self.difficulty_var.get(),
             command=self.on_difficulty_selected,
         )
+        self.difficulty_menu.config(width=22)
         self.difficulty_menu.grid(row=2, column=1, sticky="ew", pady=6)
+        form.grid_columnconfigure(1, weight=1)
         self.refresh_difficulty_options()
 
-        tk.Label(
-            container,
+        hint_card = self._card(left, bg="#f7f9fc", border="#d7deea", padx=12, pady=12)
+        hint_card.pack(fill="x", pady=(14, 0))
+        self._label(
+            hint_card,
+            text="Ce que garantit ce reglage",
+            bg="#f7f9fc",
+            fg=ACCENT_COLOR,
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            hint_card,
             textvariable=self.category_hint_var,
-            fg="#1f3a93",
+            bg="#f7f9fc",
+            wraplength=340,
             justify="left",
-            wraplength=440,
-        ).pack(fill="x", pady=(10, 10))
+        ).pack(anchor="w", fill="x", pady=(6, 0))
 
-        tk.Label(
-            container,
-            text=(
-                "Le mode multijoueur reste experimental dans server.py et n'est pas "
-                "expose dans cette version."
-            ),
-            fg="#555555",
-            justify="left",
-            wraplength=440,
-        ).pack(fill="x", pady=(0, 10))
-
-        if self.player is not None:
-            self.progress_var.set(self._build_player_summary(self.player))
-            tk.Label(
-                container,
-                textvariable=self.progress_var,
+        if progression is not None:
+            self._section_title(right, "Progression visible")
+            self._label(
+                right,
+                text=self._build_player_summary(self.player),
+                wraplength=330,
                 justify="left",
-                wraplength=440,
-            ).pack(fill="x", pady=(0, 12))
+            ).pack(anchor="w", fill="x")
+            primary_goal = progression["primary_goal"]
+            if primary_goal is not None:
+                self._label(
+                    right,
+                    text=(
+                        "Prochaine action recommandee : "
+                        f"{primary_goal['title']} avec {format_category_name(primary_goal['category'])} "
+                        f"en {primary_goal['difficulty']}."
+                    ),
+                    fg=ACCENT_COLOR,
+                    wraplength=330,
+                    justify="left",
+                ).pack(anchor="w", fill="x", pady=(10, 10))
+            self._render_goal_cards(right, progression["goals"], compact=True)
+        else:
+            self._section_title(right, "Parcours solo")
+            self._render_bullets(
+                right,
+                [
+                    "Choisir un pseudo, une categorie et un niveau.",
+                    "Jouer la manche au clavier A-Z ou avec les boutons.",
+                    "Lire le score gagne, les stats et l'objectif suivant en fin de partie.",
+                ],
+                wraplength=320,
+            )
+            self._label(
+                right,
+                text=(
+                    "Le produit livre reste volontairement centre sur le solo local. "
+                    "La valeur demontree ici vient de la calibration, du scoring et de la progression."
+                ),
+                fg=SUBTLE_TEXT,
+                wraplength=320,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(12, 0))
 
-        buttons = tk.Frame(container)
-        buttons.pack(fill="x")
-
+        buttons = self._frame(container, bg=APP_BG)
+        buttons.pack(fill="x", pady=(16, 0))
         tk.Button(buttons, text="Lancer une partie", command=self.start_game, width=18).pack(
             side="left",
             padx=(0, 8),
         )
+        if progression is not None and progression.get("primary_goal") is not None:
+            tk.Button(
+                buttons,
+                text="Jouer l'objectif recommande",
+                command=self.start_primary_goal,
+                width=24,
+            ).pack(side="left", padx=(0, 8))
         tk.Button(buttons, text="Profil", command=self.open_player_dashboard, width=14).pack(
             side="left",
             padx=(0, 8),
@@ -274,11 +536,10 @@ class HangmanApp:
         selected_pool = breakdown.get(selected_difficulty, 0)
         available_text = ", ".join(available_difficulties)
         self.category_hint_var.set(
-            f"{format_category_name(self.category_var.get())} : {total_words} mots "
-            f"(Facile {breakdown['Facile']}, Moyen {breakdown['Moyen']}, "
-            f"Difficile {breakdown['Difficile']}). Niveaux garantis : {available_text} "
-            f"(au moins {MIN_WORD_POOL_SIZE} mots). Le niveau {selected_difficulty} "
-            f"utilisera {selected_pool} mot(s) calibres."
+            f"{format_category_name(self.category_var.get())} propose {total_words} mots au total. "
+            f"Le niveau {selected_difficulty} active un pool calibre de {selected_pool} mot(s). "
+            f"Niveaux jouables : {available_text} "
+            f"(seuil de fiabilite : {MIN_WORD_POOL_SIZE} mots minimum par niveau)."
         )
 
     def _load_player_from_form(self):
@@ -290,6 +551,7 @@ class HangmanApp:
 
         self.player = player
         self.player_name_var.set(player["name"])
+        self.progress_var.set(self._build_player_summary(player))
         return player
 
     def open_player_dashboard(self):
@@ -366,45 +628,126 @@ class HangmanApp:
     def show_game_screen(self):
         self.clear_screen()
         self.letter_buttons = {}
+        _, progression = self._get_progression_bundle()
 
-        container = tk.Frame(self.root, padx=20, pady=20)
-        container.pack()
+        container = self._frame(self.root, bg=APP_BG, padx=24, pady=24)
+        container.pack(fill="both", expand=True)
 
-        header_text = (
-            f"Joueur : {self.player['name']}  |  "
-            f"Categorie : {format_category_name(self.session.category)}  |  "
-            f"Difficulte : {self.session.difficulty}"
-        )
-        tk.Label(container, text=header_text, font=("Arial", 10, "bold")).pack(pady=(0, 6))
+        hero = self._card(container, bg=HERO_BG, border=ACCENT_BORDER, padx=18, pady=16)
+        hero.pack(fill="x")
+        self._label(
+            hero,
+            text=(
+                f"{self.player['name']} | {format_category_name(self.session.category)} | "
+                f"{self.session.difficulty}"
+            ),
+            bg=HERO_BG,
+            fg=ACCENT_COLOR,
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w")
 
         self.round_hint_var.set(
-            f"Calibration : {self.session.word_profile.length} lettres, "
-            f"complexite {self.session.word_complexity}, "
-            f"timer {self.session.time_limit} s."
+            f"Mot de {self.session.word_profile.length} lettres, complexite "
+            f"{self.session.word_complexity}, timer {self.session.time_limit} s."
         )
-        tk.Label(container, textvariable=self.round_hint_var, fg="#555555").pack(pady=(0, 4))
-        tk.Label(
-            container,
-            text="Clavier actif : tapez une lettre A-Z ou cliquez sur les boutons.",
-            fg="#1f3a93",
-        ).pack(pady=(0, 12))
-
-        tk.Label(container, textvariable=self.word_var, font=("Courier New", 24, "bold")).pack(
-            pady=(0, 12)
-        )
-        tk.Label(container, textvariable=self.tried_letters_var).pack(pady=4)
-        tk.Label(container, textvariable=self.attempts_var).pack(pady=4)
-        tk.Label(container, textvariable=self.timer_var).pack(pady=4)
-        tk.Label(container, textvariable=self.score_hint_var, fg="#1f3a93").pack(pady=(4, 8))
-        tk.Label(
-            container,
-            textvariable=self.progress_var,
+        self._label(
+            hero,
+            textvariable=self.round_hint_var,
+            bg=HERO_BG,
+            wraplength=760,
             justify="left",
-            wraplength=440,
-        ).pack(pady=(0, 8))
-        tk.Label(container, textvariable=self.status_var, fg="#444444").pack(pady=(0, 12))
+        ).pack(anchor="w", fill="x", pady=(4, 6))
+        if progression is not None and progression.get("primary_goal") is not None:
+            primary_goal = progression["primary_goal"]
+            is_aligned = (
+                primary_goal.get("category") == self.session.category
+                and primary_goal.get("difficulty") == self.session.difficulty
+            )
+            guidance = (
+                "Cette manche suit l'objectif recommande."
+                if is_aligned
+                else (
+                    "Objectif recommande en parallele : "
+                    f"{primary_goal['title']} avec {format_category_name(primary_goal['category'])} "
+                    f"en {primary_goal['difficulty']}."
+                )
+            )
+            self._label(
+                hero,
+                text=guidance,
+                bg=HERO_BG,
+                fg=SUCCESS_COLOR if is_aligned else ACCENT_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x")
 
-        keyboard = tk.Frame(container)
+        body = self._frame(container, bg=APP_BG)
+        body.pack(fill="x", pady=(16, 0))
+
+        left = self._card(body, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        left.pack(side="left", fill="both", expand=True)
+        right = self._card(body, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
+        right.pack(side="left", fill="both", padx=(14, 0))
+
+        self._label(
+            left,
+            text="Clavier actif : tapez une lettre A-Z ou cliquez sur les boutons.",
+            fg=ACCENT_COLOR,
+            font=("Arial", 10, "bold"),
+            wraplength=420,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        self._label(
+            left,
+            textvariable=self.word_var,
+            font=("Courier New", 28, "bold"),
+        ).pack(pady=(18, 14))
+
+        metrics = self._frame(left)
+        metrics.pack(fill="x", pady=(0, 8))
+        for index, (title, variable, bg, border, fg) in enumerate(
+            [
+                ("Essais restants", self.attempts_var, "#f7f9fc", "#d7deea", TEXT_COLOR),
+                ("Temps", self.timer_var, "#fff7e8", "#ebd29a", TEXT_COLOR),
+                ("Score si victoire", self.score_hint_var, "#eef6ff", "#c8d9f1", ACCENT_COLOR),
+            ]
+        ):
+            card = self._card(metrics, bg=bg, border=border, padx=12, pady=10)
+            card.pack(side="left", fill="both", expand=True, padx=(0, 8 if index < 2 else 0))
+            self._label(
+                card,
+                text=title,
+                bg=bg,
+                fg=SUBTLE_TEXT,
+                font=("Arial", 9, "bold"),
+            ).pack(anchor="w")
+            self._label(
+                card,
+                textvariable=variable,
+                bg=bg,
+                fg=fg,
+                font=("Arial", 14, "bold"),
+            ).pack(anchor="w", pady=(2, 0))
+
+        status_card = self._card(left, bg="#f7f9fc", border="#d7deea", padx=12, pady=12)
+        status_card.pack(fill="x", pady=(4, 12))
+        self._label(
+            status_card,
+            textvariable=self.tried_letters_var,
+            bg="#f7f9fc",
+            wraplength=420,
+            justify="left",
+        ).pack(anchor="w")
+        self._label(
+            status_card,
+            textvariable=self.status_var,
+            bg="#f7f9fc",
+            fg=SUBTLE_TEXT,
+            wraplength=420,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 0))
+
+        keyboard = self._frame(left, bg=CARD_BG)
         keyboard.pack()
         for index, letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
             button = tk.Button(
@@ -416,7 +759,7 @@ class HangmanApp:
             button.grid(row=index // 6, column=index % 6, padx=2, pady=2)
             self.letter_buttons[letter] = button
 
-        actions = tk.Frame(container)
+        actions = self._frame(left, bg=CARD_BG)
         actions.pack(fill="x", pady=(14, 0))
 
         tk.Button(actions, text="Changer de reglage", command=self.return_to_menu, width=18).pack(
@@ -430,6 +773,16 @@ class HangmanApp:
         tk.Button(actions, text="Classement", command=self.show_leaderboard, width=14).pack(
             side="left"
         )
+
+        self._section_title(right, "Pourquoi cette manche compte")
+        self._label(
+            right,
+            textvariable=self.progress_var,
+            wraplength=320,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        if progression is not None:
+            self._render_goal_cards(right, progression["goals"], limit=2, compact=True)
 
         self.status_var.set("Proposez une lettre.")
         self.refresh_game_view()
@@ -456,8 +809,8 @@ class HangmanApp:
         self.word_var.set(self.session.revealed_word)
         tried_letters = ", ".join(self.session.letters_tried) or "Aucune"
         self.tried_letters_var.set(f"Lettres proposees : {tried_letters}")
-        self.attempts_var.set(f"Essais restants : {self.session.attempts_left}")
-        self.timer_var.set(f"Temps restant : {self.session.time_remaining} s")
+        self.attempts_var.set(str(self.session.attempts_left))
+        self.timer_var.set(f"{self.session.time_remaining} s")
 
         potential_score = build_score_breakdown(
             self.session.difficulty,
@@ -467,9 +820,7 @@ class HangmanApp:
             word_complexity=self.session.word_complexity,
             time_limit=self.session.time_limit,
         )["total"]
-        self.score_hint_var.set(
-            f"Score potentiel : {potential_score} pts si vous gagnez maintenant."
-        )
+        self.score_hint_var.set(f"{potential_score} pts")
         self.progress_var.set(self._build_player_summary(self.player))
 
     def schedule_timer(self):
@@ -513,9 +864,17 @@ class HangmanApp:
         for button in self.letter_buttons.values():
             button.config(state=tk.DISABLED)
 
+        before_dashboard = get_player_dashboard(self.player["id"])
+        before_snapshot = build_progression_snapshot(
+            self.player,
+            before_dashboard,
+            self.category_availability,
+        )
+
         won = reason == "won"
         score_earned = 0
-        score_summary = "Score gagne : 0"
+        score_summary = "Aucun point gagne sur cette manche."
+        breakdown = None
 
         if won:
             breakdown = build_score_breakdown(
@@ -528,12 +887,9 @@ class HangmanApp:
             )
             score_earned = breakdown["total"]
             score_summary = (
-                "Score gagne : "
-                f"{score_earned} (base {breakdown['base_points']}, "
-                f"mot {breakdown['word_bonus']}, "
-                f"complexite {breakdown['complexity_bonus']}, "
-                f"essais {breakdown['attempts_bonus']}, "
-                f"temps {breakdown['time_bonus']})"
+                f"{score_earned} pts : base {breakdown['base_points']}, "
+                f"mot {breakdown['word_bonus']}, complexite {breakdown['complexity_bonus']}, "
+                f"essais {breakdown['attempts_bonus']}, temps {breakdown['time_bonus']}."
             )
 
         self.player = record_game_result(
@@ -549,6 +905,16 @@ class HangmanApp:
             word_complexity=self.session.word_complexity,
         )
         self.progress_var.set(self._build_player_summary(self.player))
+        after_dashboard = get_player_dashboard(self.player["id"])
+        if after_dashboard is not None:
+            self.player = after_dashboard["player"]
+            self.progress_var.set(self._build_player_summary(self.player))
+        after_snapshot = build_progression_snapshot(
+            self.player,
+            after_dashboard,
+            self.category_availability,
+        )
+        completed_goals = get_newly_completed_goals(before_snapshot, after_snapshot)
 
         if reason == "won":
             title = "Victoire"
@@ -560,56 +926,140 @@ class HangmanApp:
             title = "Partie perdue"
             result_message = f"Vous n'avez plus d'essais. Le mot etait : {self.session.secret_word}."
 
-        self.show_round_summary(title, result_message, score_summary)
+        self.show_round_summary(
+            title,
+            result_message,
+            score_summary,
+            score_earned,
+            after_snapshot,
+            completed_goals,
+            breakdown,
+        )
 
-    def show_round_summary(self, title, result_message, score_summary):
+    def show_round_summary(
+        self,
+        title,
+        result_message,
+        score_summary,
+        score_earned,
+        progression_snapshot,
+        completed_goals,
+        breakdown,
+    ):
         self.clear_screen()
+        tone_bg = SUCCESS_BG if title == "Victoire" else WARNING_BG if title == "Temps ecoule" else ERROR_BG
+        tone_fg = SUCCESS_COLOR if title == "Victoire" else WARNING_COLOR if title == "Temps ecoule" else ERROR_COLOR
 
-        container = tk.Frame(self.root, padx=20, pady=20)
-        container.pack()
+        container = self._frame(self.root, bg=APP_BG, padx=24, pady=24)
+        container.pack(fill="both", expand=True)
 
-        tk.Label(container, text=title, font=("Arial", 22, "bold")).pack(pady=(0, 6))
-        tk.Label(
-            container,
+        hero = self._card(container, bg=tone_bg, border=tone_fg, padx=20, pady=18)
+        hero.pack(fill="x")
+        self._label(
+            hero,
+            text=title,
+            bg=tone_bg,
+            fg=tone_fg,
+            font=("Georgia", 24, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            hero,
             text=(
                 f"{format_category_name(self.session.category)} | "
                 f"{self.session.difficulty} | mot {self.session.secret_word}"
             ),
-            fg="#555555",
-        ).pack(pady=(0, 12))
-
-        tk.Label(
-            container,
+            bg=tone_bg,
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w", pady=(4, 6))
+        self._label(
+            hero,
             text=result_message,
-            wraplength=460,
-            justify="center",
-        ).pack(pady=(0, 8))
-        tk.Label(
-            container,
-            text=score_summary,
-            fg="#1f3a93",
-            wraplength=460,
-            justify="center",
-        ).pack(pady=(0, 8))
-        tk.Label(
-            container,
-            text=self._build_player_summary(self.player),
-            wraplength=460,
-            justify="center",
-        ).pack(pady=(0, 8))
-        tk.Label(
-            container,
-            text=(
-                "Suite logique : appuyez sur Entree pour rejouer avec le meme reglage, "
-                "ou choisissez une autre action."
-            ),
-            fg="#555555",
-            wraplength=460,
-            justify="center",
-        ).pack(pady=(0, 14))
+            bg=tone_bg,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x")
 
-        buttons = tk.Frame(container)
-        buttons.pack(fill="x")
+        self._render_metric_cards(
+            container,
+            [
+                {
+                    "label": "Score de la manche",
+                    "value": f"{score_earned} pts",
+                    "bg": "#eef6ff",
+                    "border": "#c8d9f1",
+                    "fg": ACCENT_COLOR,
+                },
+                {
+                    "label": "Essais restants",
+                    "value": str(self.session.attempts_left),
+                    "bg": "#f7f9fc",
+                    "border": "#d7deea",
+                },
+                {
+                    "label": "Temps restant",
+                    "value": f"{self.session.time_remaining} s",
+                    "bg": "#fff7e8",
+                    "border": "#ebd29a",
+                },
+            ],
+        )
+
+        details = self._card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        details.pack(fill="x")
+        self._section_title(details, "Impact sur la progression")
+        self._label(
+            details,
+            text=score_summary,
+            fg=ACCENT_COLOR if score_earned else SUBTLE_TEXT,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        self._label(
+            details,
+            text=self._build_player_summary(self.player),
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(8, 0))
+        if completed_goals:
+            self._label(
+                details,
+                text="Nouvel objectif valide : " + ", ".join(goal["title"] for goal in completed_goals) + ".",
+                fg=SUCCESS_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
+        if breakdown is not None:
+            self._label(
+                details,
+                text=(
+                    f"Lecture rapide : base {breakdown['base_points']}, mot {breakdown['word_bonus']}, "
+                    f"complexite {breakdown['complexity_bonus']}, essais {breakdown['attempts_bonus']}, "
+                    f"temps {breakdown['time_bonus']}."
+                ),
+                fg=SUBTLE_TEXT,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
+
+        if progression_snapshot is not None:
+            goal_area = self._card(container, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
+            goal_area.pack(fill="x", pady=(14, 0))
+            self._section_title(goal_area, "Prochaine action recommandee")
+            primary_goal = progression_snapshot["primary_goal"]
+            if primary_goal is not None:
+                self._label(
+                    goal_area,
+                    text=(
+                        f"{primary_goal['title']} : {primary_goal['progress_text']}. "
+                        f"{primary_goal['detail']}"
+                    ),
+                    wraplength=760,
+                    justify="left",
+                ).pack(anchor="w", fill="x", pady=(0, 8))
+            self._render_goal_cards(goal_area, progression_snapshot["goals"], limit=3)
+
+        buttons = self._frame(container, bg=APP_BG)
+        buttons.pack(fill="x", pady=(16, 0))
 
         tk.Button(
             buttons,
@@ -617,6 +1067,14 @@ class HangmanApp:
             command=self.replay_current_selection,
             width=20,
         ).pack(side="left", padx=(0, 8))
+        if progression_snapshot is not None and progression_snapshot.get("primary_goal") is not None:
+            self.primary_goal_snapshot = progression_snapshot
+            tk.Button(
+                buttons,
+                text="Suivre l'objectif recommande",
+                command=self.start_primary_goal,
+                width=24,
+            ).pack(side="left", padx=(0, 8))
         tk.Button(
             buttons,
             text="Changer categorie",
@@ -631,7 +1089,7 @@ class HangmanApp:
             side="left"
         )
 
-        footer = tk.Frame(container)
+        footer = self._frame(container, bg=APP_BG)
         footer.pack(fill="x", pady=(14, 0))
         tk.Button(footer, text="Quitter", command=self.close, width=12).pack()
 
@@ -649,19 +1107,24 @@ class HangmanApp:
         self.player = dashboard["player"]
         self.player_name_var.set(self.player["name"])
         self.progress_var.set(self._build_player_summary(self.player))
+        progression = build_progression_snapshot(self.player, dashboard, self.category_availability)
+        self.primary_goal_snapshot = progression
 
-        profile_window = tk.Toplevel(self.root)
+        profile_window = tk.Toplevel(self.root, bg=APP_BG)
         profile_window.title(f"Profil - {self.player['name']}")
         profile_window.resizable(False, False)
 
-        container = tk.Frame(profile_window, padx=14, pady=14)
-        container.pack()
+        container = self._frame(profile_window, bg=APP_BG, padx=18, pady=18)
+        container.pack(fill="both", expand=True)
 
-        tk.Label(
-            container,
+        header = self._card(container, bg=HERO_BG, border=ACCENT_BORDER, padx=18, pady=16)
+        header.pack(fill="x")
+        self._label(
+            header,
             text=f"Profil de {self.player['name']}",
-            font=("Arial", 18, "bold"),
-        ).pack(pady=(0, 10))
+            bg=HERO_BG,
+            font=("Georgia", 20, "bold"),
+        ).pack(anchor="w")
 
         overview = dashboard["overview"]
         recent_form = dashboard["recent_form"]
@@ -681,12 +1144,15 @@ class HangmanApp:
         else:
             summary_lines.append("Aucune manche enregistree pour l'instant.")
 
+        summary_card = self._card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        summary_card.pack(fill="x", pady=(14, 0))
+        self._section_title(summary_card, "Vue d'ensemble")
         for line in summary_lines:
-            tk.Label(
-                container,
+            self._label(
+                summary_card,
                 text=line,
                 justify="left",
-                wraplength=520,
+                wraplength=760,
             ).pack(fill="x", pady=2)
 
         insight_lines = []
@@ -716,31 +1182,36 @@ class HangmanApp:
             )
 
         if insight_lines:
-            tk.Label(
-                container,
+            insight_card = self._card(container, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
+            insight_card.pack(fill="x", pady=(14, 0))
+            self._label(
+                insight_card,
                 text="Points de progression",
                 font=("Arial", 12, "bold"),
-            ).pack(pady=(14, 6))
+            ).pack(anchor="w", pady=(0, 6))
             for line in insight_lines:
-                tk.Label(
-                    container,
+                self._label(
+                    insight_card,
                     text=line,
                     justify="left",
-                    wraplength=520,
+                    wraplength=760,
                 ).pack(fill="x", pady=2)
 
-        tk.Label(
-            container,
-            text="Dernieres parties",
-            font=("Arial", 12, "bold"),
-        ).pack(pady=(14, 6))
+        goals_card = self._card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        goals_card.pack(fill="x", pady=(14, 0))
+        self._section_title(goals_card, "Objectifs actifs")
+        self._render_goal_cards(goals_card, progression["goals"], limit=3)
 
-        table = tk.Frame(container)
+        table_card = self._card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        table_card.pack(fill="x", pady=(14, 0))
+        self._section_title(table_card, "Dernieres parties")
+
+        table = self._frame(table_card)
         table.pack()
 
         headers = ["#", "Resultat", "Categorie", "Niveau", "Score", "Fin", "Date"]
         for index, header in enumerate(headers):
-            tk.Label(table, text=header, font=("Arial", 10, "bold")).grid(
+            self._label(table, text=header, font=("Arial", 10, "bold")).grid(
                 row=0,
                 column=index,
                 padx=6,
@@ -748,7 +1219,7 @@ class HangmanApp:
             )
 
         if not dashboard["recent_games"]:
-            tk.Label(table, text="Aucune partie enregistree.").grid(
+            self._label(table, text="Aucune partie enregistree.").grid(
                 row=1,
                 column=0,
                 columnspan=len(headers),
@@ -766,7 +1237,7 @@ class HangmanApp:
                     format_played_at(game["played_at"]),
                 ]
                 for column_index, value in enumerate(values):
-                    tk.Label(table, text=value).grid(
+                    self._label(table, text=value).grid(
                         row=row_index,
                         column=column_index,
                         padx=6,
@@ -779,45 +1250,53 @@ class HangmanApp:
 
     def show_leaderboard(self):
         rows = get_leaderboard_data()
-        leaderboard = tk.Toplevel(self.root)
+        leaderboard = tk.Toplevel(self.root, bg=APP_BG)
         leaderboard.title("Classement")
         leaderboard.resizable(False, False)
 
-        container = tk.Frame(leaderboard, padx=14, pady=14)
-        container.pack()
+        container = self._frame(leaderboard, bg=APP_BG, padx=18, pady=18)
+        container.pack(fill="both", expand=True)
 
-        tk.Label(container, text="Classement solo", font=("Arial", 18, "bold")).grid(
-            row=0,
-            column=0,
-            columnspan=6,
-            pady=(0, 8),
-        )
-        tk.Label(
-            container,
-            text="Tri par score total, puis meilleur score.",
-            fg="#555555",
-        ).grid(row=1, column=0, columnspan=6, pady=(0, 12))
+        header = self._card(container, bg=HERO_BG, border=ACCENT_BORDER, padx=18, pady=16)
+        header.pack(fill="x")
+        self._label(
+            header,
+            text="Classement solo",
+            bg=HERO_BG,
+            font=("Georgia", 20, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            header,
+            text="Tri par score total, puis meilleur score et nombre de victoires.",
+            bg=HERO_BG,
+            fg=SUBTLE_TEXT,
+        ).pack(anchor="w", pady=(4, 0))
 
+        table_card = self._card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        table_card.pack(fill="x", pady=(14, 0))
+        table = self._frame(table_card)
+        table.pack()
         headers = ["#", "Joueur", "Score total", "Meilleur", "Victoires", "Taux"]
         for index, header in enumerate(headers):
-            tk.Label(container, text=header, font=("Arial", 10, "bold")).grid(
-                row=2,
+            self._label(table, text=header, font=("Arial", 10, "bold")).grid(
+                row=0,
                 column=index,
                 padx=6,
                 pady=4,
             )
 
         if not rows:
-            tk.Label(container, text="Aucune donnee disponible.").grid(
-                row=3,
+            self._label(table, text="Aucune donnee disponible.").grid(
+                row=1,
                 column=0,
                 columnspan=6,
                 pady=8,
             )
         else:
-            for row_index, player in enumerate(rows, start=3):
+            for row_index, player in enumerate(rows, start=1):
+                row_bg = "#eef6ff" if self.player and player["id"] == self.player["id"] else CARD_BG
                 values = [
-                    row_index - 2,
+                    row_index,
                     player["name"],
                     player["score_total"],
                     player["best_score"],
@@ -825,18 +1304,15 @@ class HangmanApp:
                     f"{player['win_rate']} %",
                 ]
                 for column_index, value in enumerate(values):
-                    tk.Label(container, text=value).grid(
+                    self._label(table, text=value, bg=row_bg).grid(
                         row=row_index,
                         column=column_index,
                         padx=6,
                         pady=3,
                     )
 
-        tk.Button(container, text="Fermer", command=leaderboard.destroy, width=14).grid(
-            row=len(rows) + 4,
-            column=0,
-            columnspan=6,
-            pady=(14, 0),
+        tk.Button(container, text="Fermer", command=leaderboard.destroy, width=14).pack(
+            pady=(14, 0)
         )
 
     def _build_player_summary(self, player):
