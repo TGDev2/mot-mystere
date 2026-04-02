@@ -88,6 +88,19 @@ class GameSessionTestCase(unittest.TestCase):
 
         self.assertEqual(session.secret_word, "LION")
 
+    def test_allowed_words_can_drive_a_full_rotation(self):
+        replay_categories = {"animaux": ["CHAT", "LION", "OURS", "LOUP", "VACHE"]}
+
+        session = GameSession.create(
+            replay_categories,
+            "animaux",
+            "Facile",
+            rng=FixedChoice(),
+            allowed_words=["LOUP", "VACHE"],
+        )
+
+        self.assertEqual(session.secret_word, "LOUP")
+
 
 if __name__ == "__main__":
     unittest.main()

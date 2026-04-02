@@ -6,7 +6,9 @@ from database import (
     get_or_create_player,
     get_player_dashboard,
     get_recent_games,
+    get_word_rotation_state,
     record_game_result,
+    save_word_rotation_state,
     setup_database,
 )
 
@@ -101,7 +103,30 @@ class DatabaseTestCase(unittest.TestCase):
         self.assertEqual(dashboard["weakest_category"]["category"], "pays")
         self.assertEqual(dashboard["category_stats"][0]["category"], "animaux")
         self.assertEqual(dashboard["difficulty_stats"][0]["difficulty"], "Facile")
+        self.assertEqual(dashboard["selection_stats"][0]["category"], "animaux")
         self.assertEqual(dashboard["recent_games"][0]["difficulty"], "Difficile")
+
+    def test_word_rotation_state_persists_remaining_pool(self):
+        player = get_or_create_player("Alice", db_path=self.db_path)
+
+        save_word_rotation_state(
+            player["id"],
+            "animaux",
+            "Facile",
+            ["CHAT", "LION", "OURS"],
+            last_word="VACHE",
+            db_path=self.db_path,
+        )
+
+        state = get_word_rotation_state(
+            player["id"],
+            "animaux",
+            "Facile",
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(state["remaining_words"], ["CHAT", "LION", "OURS"])
+        self.assertEqual(state["last_word"], "VACHE")
 
 
 if __name__ == "__main__":

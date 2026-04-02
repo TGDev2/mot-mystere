@@ -42,11 +42,20 @@ class CategoriesTestCase(unittest.TestCase):
         categories = load_categories()
 
         for category, words in categories.items():
+            supported = get_supported_difficulties(words)
+            breakdown = get_category_difficulty_breakdown(words)
+
             self.assertEqual(
-                get_supported_difficulties(words),
+                supported,
                 DIFFICULTY_LEVELS,
                 msg=f"{category} ne couvre plus tous les niveaux garantis.",
             )
+            for difficulty in DIFFICULTY_LEVELS:
+                self.assertGreaterEqual(
+                    breakdown[difficulty],
+                    15,
+                    msg=f"{category} ne fournit pas encore un pool solide en {difficulty}.",
+                )
 
 
 if __name__ == "__main__":

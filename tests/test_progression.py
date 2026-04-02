@@ -1,6 +1,10 @@
 import unittest
 
-from progression import build_progression_snapshot, get_newly_completed_goals
+from progression import (
+    build_progression_snapshot,
+    get_newly_completed_goals,
+    get_newly_reached_mastery_states,
+)
 
 
 class ProgressionTestCase(unittest.TestCase):
@@ -11,36 +15,37 @@ class ProgressionTestCase(unittest.TestCase):
             "sports": ("Facile",),
         }
 
-    def test_snapshot_starts_with_explicit_primary_goal(self):
+    def test_snapshot_starts_with_mastery_grid_and_validation_goal(self):
         snapshot = build_progression_snapshot(
             {"score_total": 0},
             {
-                "category_stats": [],
-                "difficulty_stats": [],
+                "selection_stats": [],
                 "favorite_category": None,
                 "best_difficulty": None,
             },
             self.category_availability,
         )
 
+        mastery = snapshot["mastery"]
         goals = {goal["key"]: goal for goal in snapshot["goals"]}
 
-        self.assertEqual(snapshot["primary_goal"]["key"], "difficulty_passport")
-        self.assertEqual(goals["difficulty_passport"]["category"], "animaux")
-        self.assertEqual(goals["difficulty_passport"]["difficulty"], "Facile")
-        self.assertEqual(goals["category_tour"]["progress_text"], "0/3 categories teste(es)")
+        self.assertEqual(snapshot["primary_goal"]["key"], "validation_board")
+        self.assertEqual(mastery["total_pairs"], 6)
+        self.assertEqual(mastery["validated_pairs"], 0)
+        self.assertEqual(mastery["mastered_pairs"], 0)
+        self.assertEqual(mastery["focus_pair"]["category"], "animaux")
+        self.assertEqual(mastery["focus_pair"]["difficulty"], "Facile")
+        self.assertEqual(goals["validation_board"]["progress_text"], "0/6 paires validees")
 
-    def test_snapshot_recommends_missing_difficulty_and_unplayed_category(self):
+    def test_snapshot_recommends_next_unvalidated_pair_then_mastery(self):
         snapshot = build_progression_snapshot(
             {"score_total": 260},
             {
-                "category_stats": [
-                    {"category": "animaux", "games_played": 2, "wins": 1},
-                    {"category": "pays", "games_played": 1, "wins": 1},
-                ],
-                "difficulty_stats": [
-                    {"difficulty": "Facile", "games_played": 2, "wins": 1, "average_score": 180},
-                    {"difficulty": "Moyen", "games_played": 1, "wins": 1, "average_score": 140},
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 2, "wins": 1},
+                    {"category": "animaux", "difficulty": "Moyen", "games_played": 1, "wins": 0},
+                    {"category": "pays", "difficulty": "Facile", "games_played": 4, "wins": 3},
+                    {"category": "pays", "difficulty": "Moyen", "games_played": 2, "wins": 1},
                 ],
                 "favorite_category": {"category": "animaux"},
                 "best_difficulty": {"difficulty": "Facile"},
@@ -48,19 +53,24 @@ class ProgressionTestCase(unittest.TestCase):
             self.category_availability,
         )
 
+        mastery = snapshot["mastery"]
         goals = {goal["key"]: goal for goal in snapshot["goals"]}
 
-        self.assertEqual(goals["difficulty_passport"]["difficulty"], "Difficile")
-        self.assertEqual(goals["difficulty_passport"]["category"], "pays")
-        self.assertEqual(goals["category_tour"]["category"], "sports")
+        self.assertEqual(mastery["focus_pair"]["category"], "pays")
+        self.assertEqual(mastery["focus_pair"]["difficulty"], "Difficile")
+        self.assertEqual(mastery["mastery_focus_pair"]["category"], "animaux")
+        self.assertEqual(mastery["mastery_focus_pair"]["difficulty"], "Facile")
+        self.assertEqual(goals["mastery_board"]["progress_text"], "1/6 paires maitrisees")
         self.assertEqual(goals["score_milestone"]["progress_text"], "260/500 pts")
 
-    def test_newly_completed_goals_are_detected(self):
+    def test_new_mastery_states_detect_validation_and_mastery(self):
         before = build_progression_snapshot(
             {"score_total": 260},
             {
-                "category_stats": [{"category": "animaux", "games_played": 1, "wins": 1}],
-                "difficulty_stats": [{"difficulty": "Facile", "games_played": 1, "wins": 1}],
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 1, "wins": 0},
+                    {"category": "pays", "difficulty": "Facile", "games_played": 2, "wins": 2},
+                ],
                 "favorite_category": {"category": "animaux"},
                 "best_difficulty": {"difficulty": "Facile"},
             },
@@ -69,15 +79,9 @@ class ProgressionTestCase(unittest.TestCase):
         after = build_progression_snapshot(
             {"score_total": 520},
             {
-                "category_stats": [
-                    {"category": "animaux", "games_played": 2, "wins": 1},
-                    {"category": "pays", "games_played": 2, "wins": 1},
-                    {"category": "sports", "games_played": 1, "wins": 1},
-                ],
-                "difficulty_stats": [
-                    {"difficulty": "Facile", "games_played": 2, "wins": 1, "average_score": 140},
-                    {"difficulty": "Moyen", "games_played": 2, "wins": 1, "average_score": 170},
-                    {"difficulty": "Difficile", "games_played": 1, "wins": 1, "average_score": 240},
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 2, "wins": 1},
+                    {"category": "pays", "difficulty": "Facile", "games_played": 3, "wins": 3},
                 ],
                 "favorite_category": {"category": "animaux"},
                 "best_difficulty": {"difficulty": "Difficile"},
@@ -86,8 +90,15 @@ class ProgressionTestCase(unittest.TestCase):
         )
 
         completed = {goal["key"] for goal in get_newly_completed_goals(before, after)}
+        mastery_updates = {
+            update["title"] for update in get_newly_reached_mastery_states(before, after)
+        }
 
-        self.assertEqual(completed, {"difficulty_passport", "category_tour"})
+        self.assertEqual(completed, set())
+        self.assertEqual(
+            mastery_updates,
+            {"Animaux / Facile valide", "Pays / Facile maitrise"},
+        )
 
 
 if __name__ == "__main__":

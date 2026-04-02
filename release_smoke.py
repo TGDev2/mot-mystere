@@ -1,16 +1,13 @@
 from pathlib import Path
 import tempfile
 
-from categories import load_categories
+from categories import get_supported_difficulties, load_categories
 from database import (
     get_leaderboard_data,
-    get_or_create_player,
     get_player_dashboard,
-    record_game_result,
     setup_database,
 )
-from game_session import GameSession
-from scoring import build_score_breakdown
+from solo_game_service import create_session_for_player, prepare_player, resolve_round
 
 
 class FixedChoice:
@@ -28,15 +25,6 @@ def _play_winning_round(session):
 
     if session.status != "won":
         raise RuntimeError("Le smoke test n'a pas reussi a gagner une manche.")
-
-    return build_score_breakdown(
-        session.difficulty,
-        session.word_profile.length,
-        session.attempts_left,
-        session.time_remaining,
-        word_complexity=session.word_complexity,
-        time_limit=session.time_limit,
-    )["total"]
 
 
 def _play_losing_round(session):
@@ -62,41 +50,49 @@ def run_release_smoke_test(db_path=None):
     categories = load_categories()
     if not categories:
         raise RuntimeError("Aucune categorie n'est disponible pour le smoke test.")
+    category_availability = {
+        key: get_supported_difficulties(words)
+        for key, words in categories.items()
+    }
 
     category = sorted(categories)[0]
-    player = get_or_create_player("Smoke Tester", db_path=db_path)
+    player = prepare_player("Smoke Tester", db_path=db_path)
 
-    winning_session = GameSession.create(categories, category, "Facile", rng=FixedChoice())
-    winning_score = _play_winning_round(winning_session)
-    record_game_result(
+    winning_session = create_session_for_player(
         player["id"],
-        won=True,
-        score_earned=winning_score,
-        category=winning_session.category,
-        difficulty=winning_session.difficulty,
-        secret_word=winning_session.secret_word,
-        end_reason="won",
-        attempts_left=winning_session.attempts_left,
-        time_remaining=winning_session.time_remaining,
-        word_complexity=winning_session.word_complexity,
+        categories,
+        category,
+        "Facile",
+        rng=FixedChoice(),
         db_path=db_path,
     )
+    _play_winning_round(winning_session)
+    winning_outcome = resolve_round(
+        player,
+        winning_session,
+        "won",
+        category_availability,
+        db_path=db_path,
+    )
+    player = winning_outcome["player"]
 
-    losing_session = GameSession.create(categories, category, "Difficile", rng=FixedChoice())
+    losing_session = create_session_for_player(
+        player["id"],
+        categories,
+        category,
+        "Difficile",
+        rng=FixedChoice(),
+        db_path=db_path,
+    )
     _play_losing_round(losing_session)
-    updated_player = record_game_result(
-        player["id"],
-        won=False,
-        score_earned=0,
-        category=losing_session.category,
-        difficulty=losing_session.difficulty,
-        secret_word=losing_session.secret_word,
-        end_reason="attempts",
-        attempts_left=losing_session.attempts_left,
-        time_remaining=losing_session.time_remaining,
-        word_complexity=losing_session.word_complexity,
+    losing_outcome = resolve_round(
+        player,
+        losing_session,
+        "attempts",
+        category_availability,
         db_path=db_path,
     )
+    updated_player = losing_outcome["player"]
 
     dashboard = get_player_dashboard(player["id"], db_path=db_path)
     leaderboard = get_leaderboard_data(db_path=db_path)

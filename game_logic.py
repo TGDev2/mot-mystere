@@ -1,4 +1,3 @@
-from collections import defaultdict
 from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox
@@ -9,18 +8,15 @@ from categories import (
     get_supported_difficulties,
     load_categories,
 )
-from database import (
-    get_leaderboard_data,
-    get_or_create_player,
-    get_player_dashboard,
-    record_game_result,
-)
-from game_session import GameSession
-from progression import build_progression_snapshot, get_newly_completed_goals
+from database import get_leaderboard_data
 from scoring import build_score_breakdown
+from solo_game_service import (
+    create_session_for_player,
+    get_progression_bundle,
+    prepare_player,
+    resolve_round,
+)
 
-
-RECENT_WORD_MEMORY = 3
 APP_BG = "#f3efe6"
 CARD_BG = "#fffdf9"
 HERO_BG = "#e8f0ff"
@@ -90,7 +86,6 @@ class HangmanApp:
         self.session = None
         self.timer_job = None
         self.letter_buttons = {}
-        self.recent_words_by_selection = defaultdict(list)
         self.category_labels = {format_category_name(key): key for key in self.categories}
 
         first_category = next(iter(self.categories))
@@ -259,20 +254,111 @@ class HangmanApp:
                 font=("Arial", 14, "bold"),
             ).pack(anchor="w", pady=(2, 0))
 
+    def _get_mastery_cell_style(self, cell):
+        state = cell.get("state")
+        if state == "mastered":
+            return SUCCESS_BG, SUCCESS_COLOR, SUCCESS_COLOR
+        if state == "validated":
+            return "#eef6ff", ACCENT_COLOR, ACCENT_BORDER
+        if state == "in_progress":
+            return "#fff7e8", WARNING_COLOR, "#ebd29a"
+        if state == "unavailable":
+            return MUTED_BG, SUBTLE_TEXT, "#d7d0c1"
+        return "#f7f9fc", SUBTLE_TEXT, "#d7deea"
+
+    def _render_mastery_grid(self, parent, mastery, *, compact=False):
+        if mastery is None:
+            return
+
+        legend = self._card(
+            parent,
+            bg="#f7f9fc" if compact else CARD_BG,
+            border="#d7deea" if compact else ACCENT_BORDER,
+            padx=12,
+            pady=10,
+        )
+        legend.pack(fill="x", pady=(6, 0))
+        self._label(
+            legend,
+            text=(
+                "Lecture rapide : 0/1 = premiere validation, 1-2/3 = valide, "
+                "3/3 = maitrise."
+            ),
+            fg=SUBTLE_TEXT,
+            wraplength=320 if compact else 760,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+
+        table_card = self._card(
+            parent,
+            bg=CARD_BG if compact else "#fcfbf7",
+            border=ACCENT_BORDER if compact else "#d7d0c1",
+            padx=12,
+            pady=12,
+        )
+        table_card.pack(fill="x", pady=(8, 0))
+        table = self._frame(table_card, bg=table_card.cget("bg"))
+        table.pack(fill="x")
+
+        headers = ["Categorie", "F", "M", "D"]
+        for column_index, header in enumerate(headers):
+            self._label(
+                table,
+                text=header,
+                bg=table.cget("bg"),
+                fg=SUBTLE_TEXT,
+                font=("Arial", 9, "bold"),
+            ).grid(row=0, column=column_index, padx=4, pady=4, sticky="nsew")
+
+        for row_index, row in enumerate(mastery["rows"], start=1):
+            self._label(
+                table,
+                text=row["label"],
+                bg=table.cget("bg"),
+                font=("Arial", 9, "bold"),
+                justify="left",
+                wraplength=110 if compact else 180,
+            ).grid(row=row_index, column=0, padx=(0, 6), pady=4, sticky="w")
+
+            for column_index, cell in enumerate(row["cells"], start=1):
+                cell_bg, cell_fg, cell_border = self._get_mastery_cell_style(cell)
+                cell_card = tk.Frame(
+                    table,
+                    bg=cell_bg,
+                    padx=8,
+                    pady=6,
+                    highlightthickness=1,
+                    highlightbackground=cell_border,
+                    bd=0,
+                )
+                cell_card.grid(row=row_index, column=column_index, padx=3, pady=3, sticky="nsew")
+                cell_text = cell["progress_text"] if compact else f"{cell['state_label']}\n{cell['progress_text']}"
+                self._label(
+                    cell_card,
+                    text=cell_text,
+                    bg=cell_bg,
+                    fg=cell_fg,
+                    font=("Arial", 8, "bold") if compact else ("Arial", 9, "bold"),
+                    justify="center",
+                ).pack()
+
+        for column_index in range(len(headers)):
+            table.grid_columnconfigure(column_index, weight=1)
+
     def _get_progression_bundle(self):
         if self.player is None:
             return None, None
 
-        dashboard = get_player_dashboard(self.player["id"])
-        if dashboard is None:
+        bundle = get_progression_bundle(self.player, self.category_availability)
+        if bundle is None:
             return None, None
 
-        self.player = dashboard["player"]
+        self.player = bundle["player"]
         self.player_name_var.set(self.player["name"])
         self.progress_var.set(self._build_player_summary(self.player))
-        snapshot = build_progression_snapshot(self.player, dashboard, self.category_availability)
+        snapshot = bundle["snapshot"]
         self.primary_goal_snapshot = snapshot
-        return dashboard, snapshot
+        return bundle["dashboard"], snapshot
 
     def _sync_selection_from_goal(self, goal):
         if not goal:
@@ -319,8 +405,8 @@ class HangmanApp:
         self._label(
             hero,
             text=(
-                "Version solo desktop pensee pour une demo rapide : choix clair, manche lisible, "
-                "score persistant et prochain objectif visible sans explication externe."
+                "Experience solo desktop concue pour rejouer souvent : rotation durable des mots, "
+                "progression de maitrise et choix toujours lisibles."
             ),
             bg=HERO_BG,
             wraplength=760,
@@ -422,13 +508,25 @@ class HangmanApp:
         ).pack(anchor="w", fill="x", pady=(6, 0))
 
         if progression is not None:
-            self._section_title(right, "Progression visible")
+            mastery = progression["mastery"]
+            self._section_title(right, "Carte de maitrise")
             self._label(
                 right,
                 text=self._build_player_summary(self.player),
                 wraplength=330,
                 justify="left",
             ).pack(anchor="w", fill="x")
+            self._label(
+                right,
+                text=(
+                    f"Maitrise globale : {mastery['mastery_percent']} %. "
+                    f"{mastery['mastered_pairs']}/{mastery['total_pairs']} paires maitrisees, "
+                    f"{mastery['pairs_left_to_master']} restantes."
+                ),
+                fg=ACCENT_COLOR,
+                wraplength=330,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
             primary_goal = progression["primary_goal"]
             if primary_goal is not None:
                 self._label(
@@ -442,6 +540,8 @@ class HangmanApp:
                     wraplength=330,
                     justify="left",
                 ).pack(anchor="w", fill="x", pady=(10, 10))
+            self._render_mastery_grid(right, mastery, compact=True)
+            self._section_title(right, "Objectifs actifs")
             self._render_goal_cards(right, progression["goals"], compact=True)
         else:
             self._section_title(right, "Parcours solo")
@@ -539,12 +639,12 @@ class HangmanApp:
             f"{format_category_name(self.category_var.get())} propose {total_words} mots au total. "
             f"Le niveau {selected_difficulty} active un pool calibre de {selected_pool} mot(s). "
             f"Niveaux jouables : {available_text} "
-            f"(seuil de fiabilite : {MIN_WORD_POOL_SIZE} mots minimum par niveau)."
+            f"(minimum garanti : {MIN_WORD_POOL_SIZE}, pool solide vise : 15 mots par niveau)."
         )
 
     def _load_player_from_form(self):
         try:
-            player = get_or_create_player(self.player_name_var.get())
+            player = prepare_player(self.player_name_var.get())
         except ValueError as exc:
             messagebox.showerror("Pseudo invalide", str(exc))
             return None
@@ -567,31 +667,15 @@ class HangmanApp:
 
         self.show_player_dashboard(player["id"])
 
-    def _get_recent_words(self, category, difficulty):
-        return list(self.recent_words_by_selection.get((category, difficulty), []))
-
-    def _remember_recent_word(self, category, difficulty, secret_word):
-        key = (category, difficulty)
-        history = self.recent_words_by_selection[key]
-        history.append(secret_word)
-        max_history = min(
-            RECENT_WORD_MEMORY,
-            max(1, get_category_difficulty_breakdown(self.categories[category])[difficulty] - 1),
-        )
-        if len(history) > max_history:
-            del history[: len(history) - max_history]
-
     def _create_session_for_current_selection(self):
         category = self.category_var.get()
         difficulty = self.difficulty_var.get()
-        session = GameSession.create(
+        return create_session_for_player(
+            self.player["id"],
             self.categories,
             category,
             difficulty,
-            recent_words=self._get_recent_words(category, difficulty),
         )
-        self._remember_recent_word(category, difficulty, session.secret_word)
-        return session
 
     def start_game(self):
         player = self._load_player_from_form()
@@ -864,76 +948,24 @@ class HangmanApp:
         for button in self.letter_buttons.values():
             button.config(state=tk.DISABLED)
 
-        before_dashboard = get_player_dashboard(self.player["id"])
-        before_snapshot = build_progression_snapshot(
+        outcome = resolve_round(
             self.player,
-            before_dashboard,
+            self.session,
+            reason,
             self.category_availability,
         )
-
-        won = reason == "won"
-        score_earned = 0
-        score_summary = "Aucun point gagne sur cette manche."
-        breakdown = None
-
-        if won:
-            breakdown = build_score_breakdown(
-                self.session.difficulty,
-                self.session.word_profile.length,
-                self.session.attempts_left,
-                self.session.time_remaining,
-                word_complexity=self.session.word_complexity,
-                time_limit=self.session.time_limit,
-            )
-            score_earned = breakdown["total"]
-            score_summary = (
-                f"{score_earned} pts : base {breakdown['base_points']}, "
-                f"mot {breakdown['word_bonus']}, complexite {breakdown['complexity_bonus']}, "
-                f"essais {breakdown['attempts_bonus']}, temps {breakdown['time_bonus']}."
-            )
-
-        self.player = record_game_result(
-            self.player["id"],
-            won=won,
-            score_earned=score_earned,
-            category=self.session.category,
-            difficulty=self.session.difficulty,
-            secret_word=self.session.secret_word,
-            end_reason=reason,
-            attempts_left=self.session.attempts_left,
-            time_remaining=self.session.time_remaining,
-            word_complexity=self.session.word_complexity,
-        )
+        self.player = outcome["player"]
         self.progress_var.set(self._build_player_summary(self.player))
-        after_dashboard = get_player_dashboard(self.player["id"])
-        if after_dashboard is not None:
-            self.player = after_dashboard["player"]
-            self.progress_var.set(self._build_player_summary(self.player))
-        after_snapshot = build_progression_snapshot(
-            self.player,
-            after_dashboard,
-            self.category_availability,
-        )
-        completed_goals = get_newly_completed_goals(before_snapshot, after_snapshot)
-
-        if reason == "won":
-            title = "Victoire"
-            result_message = f"Vous avez trouve le mot : {self.session.secret_word}."
-        elif reason == "time":
-            title = "Temps ecoule"
-            result_message = f"Le temps est termine. Le mot etait : {self.session.secret_word}."
-        else:
-            title = "Partie perdue"
-            result_message = f"Vous n'avez plus d'essais. Le mot etait : {self.session.secret_word}."
 
         self.show_round_summary(
-            title,
-            result_message,
-            score_summary,
-            score_earned,
-            after_snapshot,
-            completed_goals,
-            breakdown,
+            outcome["title"],
+            outcome["result_message"],
+            outcome["score_summary"],
+            outcome["score_earned"],
+            outcome["progression_snapshot"],
+            outcome["completed_goals"],
+            outcome["mastery_updates"],
+            outcome["breakdown"],
         )
 
     def show_round_summary(
@@ -944,6 +976,7 @@ class HangmanApp:
         score_earned,
         progression_snapshot,
         completed_goals,
+        mastery_updates,
         breakdown,
     ):
         self.clear_screen()
@@ -1028,6 +1061,14 @@ class HangmanApp:
                 wraplength=760,
                 justify="left",
             ).pack(anchor="w", fill="x", pady=(8, 0))
+        if mastery_updates:
+            self._label(
+                details,
+                text="Nouveau palier de maitrise : " + ", ".join(update["title"] for update in mastery_updates) + ".",
+                fg=SUCCESS_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
         if breakdown is not None:
             self._label(
                 details,
@@ -1056,6 +1097,18 @@ class HangmanApp:
                     wraplength=760,
                     justify="left",
                 ).pack(anchor="w", fill="x", pady=(0, 8))
+            mastery = progression_snapshot["mastery"]
+            self._label(
+                goal_area,
+                text=(
+                    f"Maitrise globale : {mastery['mastery_percent']} %. "
+                    f"{mastery['pairs_left_to_master']} paire(s) encore a maitriser."
+                ),
+                fg=ACCENT_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(0, 8))
+            self._render_mastery_grid(goal_area, mastery)
             self._render_goal_cards(goal_area, progression_snapshot["goals"], limit=3)
 
         buttons = self._frame(container, bg=APP_BG)
@@ -1099,15 +1152,16 @@ class HangmanApp:
         self.show_main_menu()
 
     def show_player_dashboard(self, player_id):
-        dashboard = get_player_dashboard(player_id)
-        if dashboard is None:
+        bundle = get_progression_bundle({"id": player_id}, self.category_availability)
+        if bundle is None:
             messagebox.showerror("Profil", "Le profil demande est introuvable.")
             return
 
-        self.player = dashboard["player"]
+        dashboard = bundle["dashboard"]
+        progression = bundle["snapshot"]
+        self.player = bundle["player"]
         self.player_name_var.set(self.player["name"])
         self.progress_var.set(self._build_player_summary(self.player))
-        progression = build_progression_snapshot(self.player, dashboard, self.category_availability)
         self.primary_goal_snapshot = progression
 
         profile_window = tk.Toplevel(self.root, bg=APP_BG)
@@ -1133,6 +1187,11 @@ class HangmanApp:
             (
                 f"Score moyen par manche : {overview['average_score']} pts. "
                 f"Pic sur une manche : {overview['peak_round_score']} pts."
+            ),
+            (
+                f"Maitrise globale : {progression['mastery']['mastery_percent']} %. "
+                f"{progression['mastery']['mastered_pairs']}/{progression['mastery']['total_pairs']} "
+                "paires maitrisees."
             ),
         ]
         if recent_form["recent_games"]:
@@ -1196,6 +1255,23 @@ class HangmanApp:
                     justify="left",
                     wraplength=760,
                 ).pack(fill="x", pady=2)
+
+        mastery_card = self._card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        mastery_card.pack(fill="x", pady=(14, 0))
+        self._section_title(mastery_card, "Maitrise par categorie")
+        self._label(
+            mastery_card,
+            text=(
+                f"{progression['mastery']['validated_pairs']}/{progression['mastery']['total_pairs']} "
+                "paires validees, "
+                f"{progression['mastery']['pairs_left_to_validate']} a valider et "
+                f"{progression['mastery']['pairs_left_to_master']} a maitriser."
+            ),
+            fg=ACCENT_COLOR,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        self._render_mastery_grid(mastery_card, progression["mastery"])
 
         goals_card = self._card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
         goals_card.pack(fill="x", pady=(14, 0))

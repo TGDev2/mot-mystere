@@ -1,4 +1,5 @@
 from contextlib import closing
+import json
 from pathlib import Path
 import sqlite3
 
@@ -58,6 +59,16 @@ def setup_database(db_path=DEFAULT_DB_PATH):
 
             CREATE INDEX IF NOT EXISTS idx_game_history_player_id
             ON game_history (player_id, id DESC);
+
+            CREATE TABLE IF NOT EXISTS word_rotation (
+                player_id INTEGER NOT NULL,
+                category TEXT NOT NULL,
+                difficulty TEXT NOT NULL,
+                remaining_words TEXT NOT NULL DEFAULT '[]',
+                last_word TEXT,
+                PRIMARY KEY (player_id, category, difficulty),
+                FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_game_history_columns(cursor)
@@ -326,6 +337,70 @@ def get_recent_games(player_id, limit=8, db_path=DEFAULT_DB_PATH):
     return [_row_to_history(row) for row in rows]
 
 
+def get_word_rotation_state(player_id, category, difficulty, db_path=DEFAULT_DB_PATH):
+    with closing(_connect(db_path)) as conn:
+        row = conn.execute(
+            """
+            SELECT remaining_words, last_word
+            FROM word_rotation
+            WHERE player_id = ? AND category = ? AND difficulty = ?
+            """,
+            (player_id, str(category), str(difficulty)),
+        ).fetchone()
+
+    if row is None:
+        return {"remaining_words": [], "last_word": None}
+
+    try:
+        remaining_words = json.loads(row["remaining_words"] or "[]")
+    except json.JSONDecodeError:
+        remaining_words = []
+
+    return {
+        "remaining_words": [str(word).strip().upper() for word in remaining_words if str(word).strip()],
+        "last_word": str(row["last_word"]).strip().upper() if row["last_word"] else None,
+    }
+
+
+def save_word_rotation_state(
+    player_id,
+    category,
+    difficulty,
+    remaining_words,
+    *,
+    last_word=None,
+    db_path=DEFAULT_DB_PATH,
+):
+    normalized_words = [
+        str(word).strip().upper()
+        for word in remaining_words
+        if str(word).strip()
+    ]
+    normalized_last_word = str(last_word).strip().upper() if last_word else None
+
+    with closing(_connect(db_path)) as conn:
+        conn.execute(
+            """
+            INSERT INTO word_rotation (
+                player_id, category, difficulty, remaining_words, last_word
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(player_id, category, difficulty)
+            DO UPDATE SET
+                remaining_words = excluded.remaining_words,
+                last_word = excluded.last_word
+            """,
+            (
+                player_id,
+                str(category),
+                str(difficulty),
+                json.dumps(normalized_words),
+                normalized_last_word,
+            ),
+        )
+        conn.commit()
+
+
 def get_player_dashboard(player_id, db_path=DEFAULT_DB_PATH):
     player = get_player(player_id, db_path=db_path)
     if player is None:
@@ -433,6 +508,22 @@ def get_player_dashboard(player_id, db_path=DEFAULT_DB_PATH):
             """,
             (player_id,),
         ).fetchall()
+        selection_stats = conn.execute(
+            """
+            SELECT
+                category,
+                difficulty,
+                COUNT(*) AS games_played,
+                COALESCE(SUM(won), 0) AS wins,
+                ROUND(AVG(score_earned), 1) AS average_score,
+                ROUND(SUM(won) * 100.0 / COUNT(*), 1) AS win_rate
+            FROM game_history
+            WHERE player_id = ?
+            GROUP BY category, difficulty
+            ORDER BY category ASC, difficulty ASC
+            """,
+            (player_id,),
+        ).fetchall()
 
     return {
         "player": player,
@@ -443,5 +534,6 @@ def get_player_dashboard(player_id, db_path=DEFAULT_DB_PATH):
         "weakest_category": dict(weakest_category) if weakest_category else None,
         "category_stats": [dict(row) for row in category_stats],
         "difficulty_stats": [dict(row) for row in difficulty_stats],
+        "selection_stats": [dict(row) for row in selection_stats],
         "recent_games": get_recent_games(player_id, db_path=db_path),
     }

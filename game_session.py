@@ -34,29 +34,21 @@ class GameSession:
         rng=None,
         *,
         recent_words=None,
+        allowed_words=None,
         minimum_pool_size=MIN_WORD_POOL_SIZE,
     ):
-        if category not in categories:
-            raise ValueError("La categorie demandee est introuvable.")
-
-        words = categories[category]
-        if not words:
-            raise ValueError("La categorie ne contient aucun mot.")
-
-        supported_difficulties = get_supported_difficulties(words, minimum_pool_size)
-        if difficulty not in supported_difficulties:
-            available = ", ".join(supported_difficulties) or "aucun"
-            raise ValueError(
-                f"Le niveau {difficulty} n'est pas disponible pour cette categorie. "
-                f"Niveaux disponibles : {available}."
-            )
-
+        available_words = get_available_word_profiles(
+            categories,
+            category,
+            difficulty,
+            minimum_pool_size=minimum_pool_size,
+        )
         random_source = rng or random
-        available_words = get_words_for_difficulty(words, difficulty)
-        recent_word_set = {str(word).strip().upper() for word in (recent_words or ()) if str(word).strip()}
-        candidate_pool = [profile for profile in available_words if profile.text not in recent_word_set]
-        if not candidate_pool:
-            candidate_pool = available_words
+        candidate_pool = build_candidate_pool(
+            available_words,
+            recent_words=recent_words,
+            allowed_words=allowed_words,
+        )
 
         selected_profile = random_source.choice(candidate_pool)
         attempts_left = get_attempts_for_difficulty(difficulty)
@@ -139,3 +131,44 @@ class GameSession:
             self.time_remaining -= 1
 
         return self.status
+
+
+def get_available_word_profiles(categories, category, difficulty, *, minimum_pool_size=MIN_WORD_POOL_SIZE):
+    if category not in categories:
+        raise ValueError("La categorie demandee est introuvable.")
+
+    words = categories[category]
+    if not words:
+        raise ValueError("La categorie ne contient aucun mot.")
+
+    supported_difficulties = get_supported_difficulties(words, minimum_pool_size)
+    if difficulty not in supported_difficulties:
+        available = ", ".join(supported_difficulties) or "aucun"
+        raise ValueError(
+            f"Le niveau {difficulty} n'est pas disponible pour cette categorie. "
+            f"Niveaux disponibles : {available}."
+        )
+
+    return get_words_for_difficulty(words, difficulty)
+
+
+def build_candidate_pool(available_words, *, recent_words=None, allowed_words=None):
+    if allowed_words is not None:
+        allowed_set = {
+            str(word).strip().upper()
+            for word in allowed_words
+            if str(word).strip()
+        }
+        candidate_pool = [profile for profile in available_words if profile.text in allowed_set]
+        if candidate_pool:
+            return candidate_pool
+
+    recent_word_set = {
+        str(word).strip().upper()
+        for word in (recent_words or ())
+        if str(word).strip()
+    }
+    candidate_pool = [profile for profile in available_words if profile.text not in recent_word_set]
+    if candidate_pool:
+        return candidate_pool
+    return list(available_words)
