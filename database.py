@@ -180,6 +180,23 @@ def _row_to_history(row):
     return history
 
 
+def _row_to_recent_player(row):
+    player = _row_to_player(row)
+    if player is None:
+        return None
+
+    player.update(
+        {
+            "last_played_at": row["last_played_at"],
+            "last_category": row["last_category"],
+            "last_difficulty": row["last_difficulty"],
+            "last_won": bool(row["last_won"]) if row["last_won"] is not None else None,
+            "last_round_score": int(row["last_round_score"] or 0),
+        }
+    )
+    return player
+
+
 def get_or_create_player(name, db_path=DEFAULT_DB_PATH):
     normalized_name = normalize_player_name(name)
     with closing(_connect(db_path)) as conn:
@@ -308,6 +325,58 @@ def get_leaderboard_data(limit=10, db_path=DEFAULT_DB_PATH):
         ).fetchall()
 
     return [_row_to_player(row) for row in rows]
+
+
+def get_recent_players(limit=6, db_path=DEFAULT_DB_PATH):
+    with closing(_connect(db_path)) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                p.id,
+                p.name,
+                p.games_played,
+                p.games_won,
+                p.games_lost,
+                p.score_total,
+                p.best_score,
+                p.last_score,
+                latest.played_at AS last_played_at,
+                latest.category AS last_category,
+                latest.difficulty AS last_difficulty,
+                latest.won AS last_won,
+                latest.score_earned AS last_round_score
+            FROM players p
+            LEFT JOIN (
+                SELECT
+                    gh.player_id,
+                    gh.played_at,
+                    gh.category,
+                    gh.difficulty,
+                    gh.won,
+                    gh.score_earned
+                FROM game_history gh
+                INNER JOIN (
+                    SELECT player_id, MAX(id) AS latest_game_id
+                    FROM game_history
+                    GROUP BY player_id
+                ) latest_ids
+                    ON latest_ids.player_id = gh.player_id
+                    AND latest_ids.latest_game_id = gh.id
+            ) latest
+                ON latest.player_id = p.id
+            WHERE p.name <> ''
+            ORDER BY
+                CASE WHEN latest.played_at IS NULL THEN 1 ELSE 0 END,
+                latest.played_at DESC,
+                p.games_played DESC,
+                p.score_total DESC,
+                p.name ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    return [_row_to_recent_player(row) for row in rows]
 
 
 def get_recent_games(player_id, limit=8, db_path=DEFAULT_DB_PATH):

@@ -9,6 +9,7 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 ## Fonctionnalites
 
 - Parcours solo clair : pseudo, categorie, difficulte, partie, rejouabilite.
+- Accueil oriente reprise : profils recents, dernier reglage rejouable et recommandation immediate.
 - Calibration des manches par niveau de difficulte, longueur, lettres rares et repetition.
 - Niveaux affiches uniquement lorsqu'un vrai pool de mots est disponible pour tenir la promesse.
 - Rotation persistante des mots par joueur, categorie et niveau pour eviter les doublons avant epuisement du pool.
@@ -17,6 +18,7 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 - Profil joueur avec historique recent, niveau le plus rentable, categorie la plus jouee et categorie a travailler.
 - Carte de maitrise categorie x difficulte avec paires a valider puis a maitriser.
 - Objectifs explicites avec prochain palier recommande sur l'accueil, en manche et en fin de partie.
+- Defis du moment derives de la maitrise, de la regularite recente et du prochain cap de score.
 - Classement local persistant avec score total, meilleur score et taux de victoire.
 - Saisie clavier A-Z active pendant la partie et ecran de fin de manche oriente progression.
 

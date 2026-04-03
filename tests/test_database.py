@@ -5,6 +5,7 @@ from database import (
     get_leaderboard_data,
     get_or_create_player,
     get_player_dashboard,
+    get_recent_players,
     get_recent_games,
     get_word_rotation_state,
     record_game_result,
@@ -127,6 +128,58 @@ class DatabaseTestCase(unittest.TestCase):
 
         self.assertEqual(state["remaining_words"], ["CHAT", "LION", "OURS"])
         self.assertEqual(state["last_word"], "VACHE")
+
+    def test_recent_players_expose_last_selection_context(self):
+        alice = get_or_create_player("Alice", db_path=self.db_path)
+        bob = get_or_create_player("Bob", db_path=self.db_path)
+
+        record_game_result(
+            alice["id"],
+            won=True,
+            score_earned=120,
+            category="animaux",
+            difficulty="Facile",
+            secret_word="CHAT",
+            end_reason="won",
+            attempts_left=8,
+            time_remaining=44,
+            word_complexity=20,
+            db_path=self.db_path,
+        )
+        record_game_result(
+            bob["id"],
+            won=False,
+            score_earned=0,
+            category="pays",
+            difficulty="Moyen",
+            secret_word="CANADA",
+            end_reason="attempts",
+            attempts_left=0,
+            time_remaining=11,
+            word_complexity=24,
+            db_path=self.db_path,
+        )
+        record_game_result(
+            bob["id"],
+            won=True,
+            score_earned=210,
+            category="sports",
+            difficulty="Difficile",
+            secret_word="BASKETBALL",
+            end_reason="won",
+            attempts_left=2,
+            time_remaining=12,
+            word_complexity=38,
+            db_path=self.db_path,
+        )
+
+        recent_players = get_recent_players(db_path=self.db_path)
+
+        self.assertEqual(recent_players[0]["name"], "Bob")
+        self.assertEqual(recent_players[0]["last_category"], "sports")
+        self.assertEqual(recent_players[0]["last_difficulty"], "Difficile")
+        self.assertTrue(recent_players[0]["last_won"])
+        self.assertEqual(recent_players[1]["name"], "Alice")
 
 
 if __name__ == "__main__":

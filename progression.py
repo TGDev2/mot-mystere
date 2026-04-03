@@ -304,6 +304,120 @@ def _build_score_goal(player, dashboard, category_availability, mastery):
     }
 
 
+def _build_pair_challenge(mastery):
+    focus_pair = mastery.get("focus_pair")
+    if focus_pair is not None:
+        wins = _as_int(focus_pair.get("wins"))
+        target = VALIDATED_WINS
+        title = "Defi de validation"
+        detail = (
+            f"Gagnez une manche sur {format_category_name(focus_pair['category'])} "
+            f"en {focus_pair['difficulty']} pour valider cette paire."
+        )
+        cta_text = "Valider maintenant"
+    else:
+        focus_pair = mastery.get("mastery_focus_pair")
+        if focus_pair is None:
+            focus_pair = next(
+                (
+                    cell
+                    for cell in mastery.get("cells", ())
+                    if cell.get("available")
+                ),
+                None,
+            )
+
+        if focus_pair is None:
+            return {
+                "key": "challenge_pair_mastery",
+                "title": "Defi de maitrise",
+                "progress_text": "Carte complete",
+                "detail": "Toutes les paires categorie/niveau sont deja maitrisees.",
+                "completed": True,
+                "ratio": 1.0,
+                "category": None,
+                "difficulty": None,
+                "cta_text": "Continuer a jouer",
+            }
+
+        wins = _as_int(focus_pair.get("wins"))
+        target = MASTERED_WINS
+        title = "Defi de maitrise"
+        detail = (
+            f"Poussez {format_category_name(focus_pair['category'])} en {focus_pair['difficulty']} "
+            f"jusqu'a {MASTERED_WINS} victoires pour maitriser la paire."
+        )
+        cta_text = "Maitriser la paire"
+
+    return {
+        "key": f"challenge_pair_{focus_pair['category']}_{focus_pair['difficulty']}_{target}",
+        "title": title,
+        "progress_text": f"{min(wins, target)}/{target} victoire(s)",
+        "detail": detail,
+        "completed": wins >= target,
+        "ratio": _ratio(min(wins, target), target),
+        "category": focus_pair["category"],
+        "difficulty": focus_pair["difficulty"],
+        "cta_text": cta_text,
+    }
+
+
+def _build_form_challenge(dashboard, category_availability, mastery):
+    recent_form = dashboard.get("recent_form") or {}
+    favorite_category = dashboard.get("favorite_category") or {}
+    best_difficulty = dashboard.get("best_difficulty") or {}
+    mastery_focus = mastery.get("mastery_focus_pair") or mastery.get("focus_pair") or {}
+
+    recent_wins = _as_int(recent_form.get("recent_wins"))
+    recent_games = _as_int(recent_form.get("recent_games"))
+    target = 3 if recent_wins < 3 else 4 if recent_wins < 4 else 5
+    difficulty = best_difficulty.get("difficulty") or mastery_focus.get("difficulty") or DIFFICULTY_LEVELS[0]
+    preferred_category = favorite_category.get("category") or mastery_focus.get("category")
+    category = _find_supporting_category(
+        category_availability,
+        difficulty,
+        preferred_category=preferred_category,
+    )
+
+    if recent_games == 0:
+        detail = (
+            "Lancez une premiere manche puis stabilisez votre rythme jusqu'a "
+            f"{target} victoire(s) sur vos 5 dernieres parties."
+        )
+    else:
+        detail = (
+            f"Passez a {target} victoire(s) sur vos 5 dernieres parties "
+            "pour installer une dynamique solide."
+        )
+
+    return {
+        "key": f"challenge_recent_form_{target}",
+        "title": "Defi de regularite",
+        "progress_text": f"{min(recent_wins, target)}/{target} victoire(s) recentes",
+        "detail": detail,
+        "completed": recent_wins >= target,
+        "ratio": _ratio(min(recent_wins, target), target),
+        "category": category,
+        "difficulty": difficulty,
+        "cta_text": "Enchainer une victoire",
+    }
+
+
+def _build_score_challenge(player, dashboard, category_availability, mastery):
+    score_goal = _build_score_goal(player, dashboard, category_availability, mastery)
+    _, next_target = _pick_score_target(_as_int((player or {}).get("score_total")))
+    score_goal["key"] = f"challenge_score_{next_target}"
+    score_goal["title"] = "Defi de score"
+    score_goal["detail"] = (
+        f"{score_goal['detail']} Priorite ideale : "
+        f"{format_category_name(score_goal['category'])} en {score_goal['difficulty']}."
+        if score_goal["category"] and score_goal["difficulty"]
+        else score_goal["detail"]
+    )
+    score_goal["cta_text"] = "Aller chercher le cap"
+    return score_goal
+
+
 def build_progression_snapshot(player, dashboard, category_availability):
     player = player or {}
     dashboard = dashboard or {}
@@ -317,10 +431,21 @@ def build_progression_snapshot(player, dashboard, category_availability):
         _build_mastery_goal(mastery),
         _build_score_goal(player, dashboard, category_availability, mastery),
     ]
+    challenges = [
+        _build_pair_challenge(mastery),
+        _build_form_challenge(dashboard, category_availability, mastery),
+        _build_score_challenge(player, dashboard, category_availability, mastery),
+    ]
     primary_goal = next((goal for goal in goals if not goal["completed"]), goals[0] if goals else None)
+    featured_challenge = next(
+        (challenge for challenge in challenges if not challenge["completed"]),
+        challenges[0] if challenges else None,
+    )
 
     return {
         "goals": goals,
+        "challenges": challenges,
+        "featured_challenge": featured_challenge,
         "primary_goal": primary_goal,
         "mastery": mastery,
     }
