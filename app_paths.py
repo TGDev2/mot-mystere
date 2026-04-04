@@ -31,3 +31,7 @@ def get_database_path():
     if override:
         return Path(override).expanduser()
     return get_data_directory() / "hangman.db"
+
+
+def get_word_packs_directory():
+    return get_data_directory() / "packs"

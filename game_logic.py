@@ -4,9 +4,9 @@ from tkinter import messagebox
 
 from categories import (
     MIN_WORD_POOL_SIZE,
+    format_category_name,
     get_category_difficulty_breakdown,
-    get_supported_difficulties,
-    load_categories,
+    load_runtime_category_catalog,
 )
 from database import get_leaderboard_data, get_recent_players
 from scoring import build_score_breakdown
@@ -33,10 +33,6 @@ TEXT_COLOR = "#1f2430"
 SUBTLE_TEXT = "#5b6270"
 
 
-def format_category_name(category_key):
-    return category_key.replace("_", " ").title()
-
-
 def format_end_reason(reason):
     mapping = {
         "won": "mot trouve",
@@ -59,20 +55,9 @@ def format_played_at(value):
 
 class HangmanApp:
     def __init__(self):
-        loaded_categories = load_categories()
-        self.category_availability = {
-            key: get_supported_difficulties(words)
-            for key, words in loaded_categories.items()
-        }
-        self.categories = {
-            key: words
-            for key, words in loaded_categories.items()
-            if self.category_availability.get(key)
-        }
-        self.category_availability = {
-            key: self.category_availability[key]
-            for key in self.categories
-        }
+        self.catalog = load_runtime_category_catalog()
+        self.categories = dict(self.catalog.categories)
+        self.category_availability = dict(self.catalog.category_availability)
         if not self.categories:
             raise RuntimeError("Aucune categorie exploitable n'est disponible.")
 
@@ -86,14 +71,15 @@ class HangmanApp:
         self.session = None
         self.timer_job = None
         self.letter_buttons = {}
-        self.category_labels = {format_category_name(key): key for key in self.categories}
+        self.category_display_names = dict(self.catalog.display_names)
+        self.category_labels = self._build_category_label_map()
 
         first_category = next(iter(self.categories))
         first_difficulty = self.category_availability[first_category][0]
 
         self.player_name_var = tk.StringVar()
         self.category_var = tk.StringVar(value=first_category)
-        self.category_display_var = tk.StringVar(value=format_category_name(first_category))
+        self.category_display_var = tk.StringVar(value=self._get_category_display_name(first_category))
         self.difficulty_var = tk.StringVar(value=first_difficulty)
         self.banner_var = tk.StringVar()
         self.word_var = tk.StringVar()
@@ -130,6 +116,80 @@ class HangmanApp:
         self.root.unbind("<Key>")
         for widget in self.root.winfo_children():
             widget.destroy()
+
+    def _get_category_display_name(self, category_key):
+        return self.category_display_names.get(
+            category_key,
+            format_category_name(category_key),
+        )
+
+    def _build_category_label_map(self):
+        counts = {}
+        for key in self.categories:
+            label = self._get_category_display_name(key)
+            counts[label] = counts.get(label, 0) + 1
+
+        labels = {}
+        for key in self.categories:
+            label = self._get_category_display_name(key)
+            if counts[label] > 1:
+                label = f"{label} [{key}]"
+            labels[label] = key
+        return labels
+
+    def _build_catalog_summary(self):
+        local_packs = [
+            pack
+            for pack in self.catalog.pack_summaries
+            if pack.origin == "local"
+        ]
+        active_local = sum(1 for pack in local_packs if pack.status == "active")
+        disabled_local = sum(1 for pack in local_packs if pack.status == "disabled")
+        invalid_local = sum(1 for pack in local_packs if pack.status == "invalid")
+        if self.catalog.local_pack_dir is not None:
+            example_manifest = self.catalog.local_pack_dir / "<nom_du_pack>" / "pack.json"
+        else:
+            example_manifest = "packs/<nom_du_pack>/pack.json"
+        return (
+            f"{len(self.categories)} categorie(s) jouables chargees. "
+            f"Packs locaux : {active_local} actif(s), {disabled_local} desactive(s), {invalid_local} invalide(s). "
+            f"Ajoutez vos packs dans {example_manifest}."
+        )
+
+    def _build_catalog_issue_lines(self, limit=3):
+        visible_issues = list(self.catalog.issues)
+        lines = [issue.message for issue in visible_issues[:limit]]
+        remaining = max(0, len(visible_issues) - len(lines))
+        if remaining:
+            lines.append(f"{remaining} autre(s) alerte(s) catalogue a verifier.")
+        return lines
+
+    def _render_catalog_card(self, parent):
+        issue_lines = self._build_catalog_issue_lines()
+        has_issue = bool(issue_lines)
+        bg = WARNING_BG if has_issue else MUTED_BG
+        border = WARNING_COLOR if has_issue else ACCENT_BORDER
+        fg = WARNING_COLOR if has_issue else ACCENT_COLOR
+
+        card = self._card(parent, bg=bg, border=border, padx=12, pady=12)
+        card.pack(fill="x", pady=(14, 0))
+        self._label(
+            card,
+            text="Catalogue local",
+            bg=bg,
+            fg=fg,
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            card,
+            text=self._build_catalog_summary(),
+            bg=bg,
+            fg=TEXT_COLOR,
+            wraplength=340,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(6, 0))
+        if issue_lines:
+            self._render_bullets(card, issue_lines, fg=fg, wraplength=320)
 
     def _frame(self, parent, *, bg=None, **kwargs):
         return tk.Frame(parent, bg=bg or parent.cget("bg"), **kwargs)
@@ -403,7 +463,7 @@ class HangmanApp:
         difficulty = recent_game.get("difficulty")
         if category in self.categories:
             self.category_var.set(category)
-            self.category_display_var.set(format_category_name(category))
+            self.category_display_var.set(self._get_category_display_name(category))
 
         self.refresh_difficulty_options()
         available_difficulties = self.get_available_difficulties(self.category_var.get())
@@ -432,7 +492,7 @@ class HangmanApp:
         category = goal.get("category")
         if category in self.categories:
             self.category_var.set(category)
-            self.category_display_var.set(format_category_name(category))
+            self.category_display_var.set(self._get_category_display_name(category))
 
         self.refresh_difficulty_options()
         available_difficulties = self.get_available_difficulties(self.category_var.get())
@@ -551,7 +611,7 @@ class HangmanApp:
         self.player_name_entry = tk.Entry(form, textvariable=self.player_name_var, width=28)
         self.player_name_entry.grid(row=0, column=1, sticky="ew", pady=6)
         self._label(form, text="Categorie").grid(row=1, column=0, sticky="w", pady=6)
-        self.category_display_var.set(format_category_name(self.category_var.get()))
+        self.category_display_var.set(self._get_category_display_name(self.category_var.get()))
         category_menu = tk.OptionMenu(
             form,
             self.category_display_var,
@@ -588,6 +648,7 @@ class HangmanApp:
             wraplength=340,
             justify="left",
         ).pack(anchor="w", fill="x", pady=(6, 0))
+        self._render_catalog_card(parent)
 
     def _render_resume_panel(self, parent, dashboard, progression):
         self._section_title(parent, "Reprise rapide")
@@ -819,7 +880,7 @@ class HangmanApp:
         selected_pool = breakdown.get(selected_difficulty, 0)
         available_text = ", ".join(available_difficulties)
         self.category_hint_var.set(
-            f"{format_category_name(self.category_var.get())} propose {total_words} mots au total. "
+            f"{self._get_category_display_name(self.category_var.get())} propose {total_words} mots au total. "
             f"Le niveau {selected_difficulty} active un pool calibre de {selected_pool} mot(s). "
             f"Niveaux jouables : {available_text} "
             f"(minimum garanti : {MIN_WORD_POOL_SIZE}, pool solide vise : 15 mots par niveau)."

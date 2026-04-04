@@ -12,6 +12,7 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 - Accueil oriente reprise : profils recents, dernier reglage rejouable et recommandation immediate.
 - Calibration des manches par niveau de difficulte, longueur, lettres rares et repetition.
 - Niveaux affiches uniquement lorsqu'un vrai pool de mots est disponible pour tenir la promesse.
+- Catalogue extensible : packs locaux activables/desactivables sans modifier le code.
 - Rotation persistante des mots par joueur, categorie et niveau pour eviter les doublons avant epuisement du pool.
 - Timer et nombre d'essais differencies selon la difficulte.
 - Score persistant aligne sur la difficulte, la complexite du mot, le temps et les essais conserves.
@@ -74,6 +75,40 @@ Variables d'environnement utiles :
 - `MOTMYSTERE_DB_PATH` pour forcer le chemin de la base
 - `MOTMYSTERE_DATA_DIR` pour forcer le dossier de donnees
 
+## Packs de categories
+
+Le jeu charge toujours les categories integrees du depot ou du build. Il peut en plus charger des packs locaux dans :
+
+- Windows : `%LOCALAPPDATA%\MotMystere\packs\<nom_du_pack>\pack.json`
+- si `MOTMYSTERE_DATA_DIR` est defini : `<MOTMYSTERE_DATA_DIR>\packs\<nom_du_pack>\pack.json`
+
+Format minimal d'un pack :
+
+```json
+{
+  "id": "voyage",
+  "label": "Pack Voyage",
+  "enabled": true,
+  "categories": [
+    {
+      "id": "capitales",
+      "label": "Capitales",
+      "source": "capitales.txt",
+      "enabled": true
+    }
+  ]
+}
+```
+
+Regles du catalogue :
+
+- `id` de pack et de categorie : minuscules ascii, chiffres et `_` uniquement.
+- `source` est resolu relativement au dossier qui contient `pack.json`.
+- un pack ou une categorie avec `enabled: false` reste present localement mais n'est pas charge.
+- une categorie est jouable seulement si au moins un niveau atteint le minimum garanti (`5` mots).
+- si une categorie ne couvre qu'une partie des niveaux, seuls les niveaux soutenus sont exposes.
+- les packs invalides, incomplets ou avec fichiers manquants sont signales dans l'interface sans casser l'historique existant.
+
 ## Lancer les tests
 
 ```bash
@@ -91,7 +126,7 @@ python main.py --smoke-test
 - `main.py` : point d'entree de l'application
 - `game_logic.py` : interface Tkinter, historique joueur et ecrans principaux
 - `game_session.py` : regles de partie et etat de manche
-- `categories.py` : chargement des categories et calibration des mots
+- `categories.py` : chargement du catalogue, validation des packs et calibration des mots
 - `scoring.py` : configuration de difficulte et calcul du score
 - `database.py` : persistance SQLite, historique et classement
 - `solo_game_service.py` : orchestration testable de la rotation, de la resolution de manche et de la progression

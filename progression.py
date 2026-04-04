@@ -1,15 +1,9 @@
-from categories import DIFFICULTY_LEVELS
+from categories import DIFFICULTY_LEVELS, format_category_name
 
 
 SCORE_MILESTONES = (100, 250, 500, 900, 1400, 2100, 3200, 4800, 7000)
 VALIDATED_WINS = 1
 MASTERED_WINS = 3
-
-
-def format_category_name(category_key):
-    return str(category_key).replace("_", " ").title()
-
-
 def _as_int(value):
     return int(value or 0)
 
