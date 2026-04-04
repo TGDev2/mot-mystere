@@ -5,6 +5,7 @@ from database import (
     record_game_result,
     save_word_rotation_state,
 )
+from categories import format_category_name
 from game_session import GameSession, get_available_word_profiles
 from progression import (
     build_progression_snapshot,
@@ -33,6 +34,216 @@ def get_progression_bundle(player, category_availability, db_path=None):
         "player": dashboard["player"],
         "dashboard": dashboard,
         "snapshot": snapshot,
+    }
+
+
+def _find_mastery_cell(snapshot, category, difficulty):
+    mastery = (snapshot or {}).get("mastery") or {}
+    for cell in mastery.get("cells", ()):
+        if not cell.get("available"):
+            continue
+        if cell.get("category") == category and cell.get("difficulty") == difficulty:
+            return cell
+    return None
+
+
+def _find_snapshot_item(snapshot, family, group_name):
+    for item in (snapshot or {}).get(group_name, ()):
+        if item.get("family") == family:
+            return item
+    return None
+
+
+def _format_guided_progress(metric, current_value, target_value):
+    current_value = int(current_value or 0)
+    target_value = max(0, int(target_value or 0))
+    if metric == "score_total":
+        return f"{current_value}/{target_value} pts"
+    if metric == "recent_wins":
+        return f"{min(current_value, target_value)}/{target_value} victoire(s) recentes"
+    return f"{min(current_value, target_value)}/{target_value} victoire(s)"
+
+
+def _build_guided_objective_title(item, family):
+    category = item.get("category")
+    difficulty = item.get("difficulty")
+    if family in {"validation_board", "challenge_pair"} and category and difficulty:
+        return f"Valider {format_category_name(category)} en {difficulty}"
+    if family == "mastery_board" and category and difficulty:
+        return f"Maitriser {format_category_name(category)} en {difficulty}"
+    if family == "challenge_recent_form":
+        return "Stabiliser la regularite recente"
+    if family in {"score_milestone", "challenge_score"}:
+        return f"Atteindre {item.get('target_value', 0)} pts"
+    return item.get("title")
+
+
+def _build_guided_objective_detail(item, family):
+    category = item.get("category")
+    difficulty = item.get("difficulty")
+    target_value = int(item.get("target_value") or 0)
+    if family in {"validation_board", "challenge_pair"} and category and difficulty:
+        return (
+            f"Gagnez sur {format_category_name(category)} en {difficulty} "
+            "pour valider cette etape de progression."
+        )
+    if family == "mastery_board" and category and difficulty:
+        return (
+            f"Montez a {target_value} victoires sur {format_category_name(category)} "
+            f"en {difficulty} pour maitriser la paire."
+        )
+    if family == "challenge_recent_form":
+        return (
+            f"Enchainez jusqu'a {target_value} victoire(s) sur vos 5 dernieres parties "
+            "en gardant une recommandation lisible apres chaque manche."
+        )
+    if family in {"score_milestone", "challenge_score"}:
+        return f"Cumulez le score necessaire avant de couper la session."
+    return item.get("detail")
+
+
+def build_guided_objective(snapshot, *, source="primary_goal"):
+    item = (snapshot or {}).get(source)
+    if item is None:
+        return None
+
+    family = item.get("family")
+    category = item.get("category")
+    difficulty = item.get("difficulty")
+    current_value = int(item.get("current_value") or 0)
+    target_value = int(item.get("target_value") or 0)
+    metric = None
+
+    if family == "validation_board":
+        if not category or not difficulty:
+            return None
+        metric = "pair_wins"
+        target_value = 1
+        cell = _find_mastery_cell(snapshot, category, difficulty) or {}
+        current_value = int(cell.get("wins") or 0)
+    elif family == "mastery_board":
+        if not category or not difficulty:
+            return None
+        metric = "pair_wins"
+        cell = _find_mastery_cell(snapshot, category, difficulty) or {}
+        current_value = int(cell.get("wins") or 0)
+        target_value = 3
+    elif family == "challenge_pair":
+        if not category or not difficulty:
+            return None
+        metric = "pair_wins"
+        cell = _find_mastery_cell(snapshot, category, difficulty) or {}
+        current_value = int(cell.get("wins") or 0)
+    elif family == "challenge_recent_form":
+        metric = "recent_wins"
+    elif family in {"score_milestone", "challenge_score"}:
+        metric = "score_total"
+    else:
+        return None
+
+    return {
+        "source": source,
+        "source_key": item["key"],
+        "source_family": family,
+        "source_title": item["title"],
+        "title": _build_guided_objective_title(item, family),
+        "detail": _build_guided_objective_detail(item, family),
+        "metric": metric,
+        "category": category,
+        "difficulty": difficulty,
+        "target_value": target_value,
+        "current_value": current_value,
+        "progress_text": _format_guided_progress(metric, current_value, target_value),
+        "completed": current_value >= target_value if target_value > 0 else False,
+    }
+
+
+def evaluate_guided_objective(objective, player, dashboard, progression_snapshot):
+    if objective is None:
+        return None
+
+    metric = objective["metric"]
+    current_value = 0
+    if metric == "pair_wins":
+        cell = _find_mastery_cell(
+            progression_snapshot,
+            objective.get("category"),
+            objective.get("difficulty"),
+        ) or {}
+        current_value = int(cell.get("wins") or 0)
+    elif metric == "recent_wins":
+        recent_form = (dashboard or {}).get("recent_form") or {}
+        current_value = int(recent_form.get("recent_wins") or 0)
+    elif metric == "score_total":
+        current_value = int((player or {}).get("score_total") or 0)
+
+    target_value = int(objective.get("target_value") or 0)
+    progress_text = _format_guided_progress(metric, current_value, target_value)
+    remaining = max(0, target_value - current_value)
+
+    return {
+        **objective,
+        "current_value": current_value,
+        "target_value": target_value,
+        "progress_text": progress_text,
+        "remaining": remaining,
+        "completed": current_value >= target_value if target_value > 0 else False,
+    }
+
+
+def build_guided_recommendation(objective, player, dashboard, progression_snapshot):
+    progress = evaluate_guided_objective(objective, player, dashboard, progression_snapshot)
+    if progress is None or progress["completed"]:
+        return None
+
+    category = progress.get("category")
+    difficulty = progress.get("difficulty")
+    detail = progress["detail"]
+    source_item = None
+
+    if progress["metric"] == "recent_wins":
+        source_item = _find_snapshot_item(
+            progression_snapshot,
+            "challenge_recent_form",
+            "challenges",
+        )
+    elif progress["metric"] == "score_total":
+        family = "challenge_score" if progress.get("source") == "featured_challenge" else "score_milestone"
+        group_name = "challenges" if family == "challenge_score" else "goals"
+        source_item = _find_snapshot_item(progression_snapshot, family, group_name)
+
+    if source_item is not None:
+        category = source_item.get("category") or category
+        difficulty = source_item.get("difficulty") or difficulty
+
+    if category and difficulty:
+        selection_text = f"{format_category_name(category)} en {difficulty}"
+    else:
+        selection_text = "le reglage conseille"
+
+    if progress["metric"] == "pair_wins":
+        detail = (
+            f"Encore {progress['remaining']} victoire(s) sur {selection_text} "
+            "pour boucler cet objectif de session."
+        )
+    elif progress["metric"] == "recent_wins":
+        detail = (
+            f"Encore {progress['remaining']} victoire(s) recentes. "
+            f"La reco du moment reste {selection_text}."
+        )
+    elif progress["metric"] == "score_total":
+        detail = (
+            f"Encore {progress['remaining']} pts. "
+            f"Le meilleur levier actuel reste {selection_text}."
+        )
+
+    return {
+        "category": category,
+        "difficulty": difficulty,
+        "title": progress["title"],
+        "progress_text": progress["progress_text"],
+        "detail": detail,
+        "remaining": progress["remaining"],
     }
 
 

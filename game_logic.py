@@ -11,7 +11,10 @@ from categories import (
 from database import get_leaderboard_data, get_recent_players
 from scoring import build_score_breakdown
 from solo_game_service import (
+    build_guided_objective,
+    build_guided_recommendation,
     create_session_for_player,
+    evaluate_guided_objective,
     get_progression_bundle,
     prepare_player,
     resolve_round,
@@ -69,6 +72,7 @@ class HangmanApp:
 
         self.player = None
         self.session = None
+        self.guided_session = None
         self.timer_job = None
         self.letter_buttons = {}
         self.category_display_names = dict(self.catalog.display_names)
@@ -459,19 +463,10 @@ class HangmanApp:
         if not recent_game:
             return
 
-        category = recent_game.get("category")
-        difficulty = recent_game.get("difficulty")
-        if category in self.categories:
-            self.category_var.set(category)
-            self.category_display_var.set(self._get_category_display_name(category))
-
-        self.refresh_difficulty_options()
-        available_difficulties = self.get_available_difficulties(self.category_var.get())
-        if difficulty in available_difficulties:
-            self.difficulty_var.set(difficulty)
-        elif available_difficulties:
-            self.difficulty_var.set(available_difficulties[0])
-        self.update_category_hint()
+        self._sync_selection_to(
+            recent_game.get("category"),
+            recent_game.get("difficulty"),
+        )
 
     def _load_recent_players(self):
         return get_recent_players()
@@ -489,18 +484,102 @@ class HangmanApp:
         if not goal:
             return
 
-        category = goal.get("category")
+        self._sync_selection_to(goal.get("category"), goal.get("difficulty"))
+
+    def _sync_selection_to(self, category, difficulty):
         if category in self.categories:
             self.category_var.set(category)
             self.category_display_var.set(self._get_category_display_name(category))
 
         self.refresh_difficulty_options()
         available_difficulties = self.get_available_difficulties(self.category_var.get())
-        if goal.get("difficulty") in available_difficulties:
-            self.difficulty_var.set(goal["difficulty"])
-        else:
+        if difficulty in available_difficulties:
+            self.difficulty_var.set(difficulty)
+        elif available_difficulties:
             self.difficulty_var.set(available_difficulties[0])
         self.update_category_hint()
+
+    def _build_guided_session_state(self, objective, dashboard, snapshot):
+        objective_state = evaluate_guided_objective(
+            objective,
+            self.player,
+            dashboard,
+            snapshot,
+        )
+        recommendation = build_guided_recommendation(
+            objective,
+            self.player,
+            dashboard,
+            snapshot,
+        )
+        return {
+            "objective": objective,
+            "objective_state": objective_state,
+            "initial_progress_text": objective_state["progress_text"],
+            "rounds": [],
+            "recommendation": recommendation,
+            "status": "active",
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
+    def _start_guided_session(self, source):
+        player = self._load_player_from_form()
+        if player is None:
+            return
+
+        dashboard, snapshot = self._get_progression_bundle()
+        objective = build_guided_objective(snapshot, source=source)
+        if objective is None:
+            messagebox.showinfo(
+                "Session guidee",
+                "Aucun objectif concret n'est disponible pour lancer une session guidee.",
+            )
+            return
+
+        guided_session = self._build_guided_session_state(objective, dashboard, snapshot)
+        recommendation = guided_session.get("recommendation")
+        if recommendation is None or not recommendation.get("category") or not recommendation.get("difficulty"):
+            messagebox.showinfo(
+                "Session guidee",
+                "La recommandation suivante n'est pas exploitable pour le moment.",
+            )
+            return
+
+        self.guided_session = guided_session
+        self._sync_selection_to(
+            recommendation.get("category"),
+            recommendation.get("difficulty"),
+        )
+        self._start_round(preserve_guided_session=True)
+
+    def _continue_guided_session(self):
+        if self.guided_session is None or self.guided_session.get("status") != "active":
+            self.show_main_menu()
+            return
+
+        recommendation = self.guided_session.get("recommendation")
+        if recommendation is None or not recommendation.get("category") or not recommendation.get("difficulty"):
+            self.show_guided_session_summary()
+            return
+
+        self._sync_selection_to(
+            recommendation.get("category"),
+            recommendation.get("difficulty"),
+        )
+        self.replay_current_selection(preserve_guided_session=True)
+
+    def _stop_guided_session_after_round(self):
+        if self.guided_session is None:
+            self.show_main_menu()
+            return
+
+        self.guided_session["status"] = "stopped"
+        self.show_guided_session_summary()
+
+    def stop_guided_session_from_game(self):
+        self.guided_session = None
+        self.session = None
+        self.show_main_menu(banner_message="Session guidee arretee avant la fin de la manche.")
 
     def start_primary_goal(self):
         if self.player is not None and self.primary_goal_snapshot is None:
@@ -519,6 +598,12 @@ class HangmanApp:
             self._sync_selection_from_goal(self.primary_goal_snapshot["featured_challenge"])
 
         self.start_game()
+
+    def start_guided_primary_goal_session(self):
+        self._start_guided_session("primary_goal")
+
+    def start_guided_featured_challenge_session(self):
+        self._start_guided_session("featured_challenge")
 
     def start_last_selection(self):
         player = self.player
@@ -734,16 +819,16 @@ class HangmanApp:
         if progression is not None and progression.get("featured_challenge") is not None:
             tk.Button(
                 buttons,
-                text="Jouer le defi du moment",
-                command=self.start_featured_challenge,
-                width=22,
+                text="Session defi",
+                command=self.start_guided_featured_challenge_session,
+                width=16,
             ).pack(side="left", padx=(0, 8))
         if progression is not None and progression.get("primary_goal") is not None:
             tk.Button(
                 buttons,
-                text="Jouer l'objectif recommande",
-                command=self.start_primary_goal,
-                width=24,
+                text="Session objectif",
+                command=self.start_guided_primary_goal_session,
+                width=18,
             ).pack(side="left", padx=(0, 8))
         tk.Button(buttons, text="Profil", command=self.open_player_dashboard, width=14).pack(
             side="left",
@@ -924,7 +1009,10 @@ class HangmanApp:
             difficulty,
         )
 
-    def start_game(self):
+    def _start_round(self, *, preserve_guided_session=False):
+        if not preserve_guided_session:
+            self.guided_session = None
+
         player = self._load_player_from_form()
         if player is None:
             return
@@ -943,10 +1031,16 @@ class HangmanApp:
 
         self.show_game_screen()
 
-    def replay_current_selection(self):
+    def start_game(self):
+        self._start_round()
+
+    def replay_current_selection(self, *, preserve_guided_session=False):
         if self.player is None:
             self.show_main_menu()
             return
+
+        if not preserve_guided_session:
+            self.guided_session = None
 
         try:
             self.session = self._create_session_for_current_selection()
@@ -988,6 +1082,20 @@ class HangmanApp:
             wraplength=760,
             justify="left",
         ).pack(anchor="w", fill="x", pady=(4, 6))
+        if self.guided_session is not None and self.guided_session.get("status") == "active":
+            objective_state = self.guided_session.get("objective_state") or {}
+            self._label(
+                hero,
+                text=(
+                    f"Session guidee en cours : {objective_state.get('title', '')} "
+                    f"({objective_state.get('progress_text', '')})."
+                ),
+                bg=HERO_BG,
+                fg=ACCENT_COLOR,
+                font=("Arial", 10, "bold"),
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(0, 4))
         if progression is not None and progression.get("primary_goal") is not None:
             primary_goal = progression["primary_goal"]
             is_aligned = (
@@ -1119,7 +1227,12 @@ class HangmanApp:
         actions = self._frame(left, bg=CARD_BG)
         actions.pack(fill="x", pady=(14, 0))
 
-        tk.Button(actions, text="Changer de reglage", command=self.return_to_menu, width=18).pack(
+        tk.Button(
+            actions,
+            text="Arreter la session" if self.guided_session is not None else "Changer de reglage",
+            command=self.stop_guided_session_from_game if self.guided_session is not None else self.return_to_menu,
+            width=18,
+        ).pack(
             side="left",
             padx=(0, 8),
         )
@@ -1158,7 +1271,10 @@ class HangmanApp:
             return
 
         if event.keysym == "Escape":
-            self.return_to_menu()
+            if self.guided_session is not None and self.guided_session.get("status") == "active":
+                self.stop_guided_session_from_game()
+            else:
+                self.return_to_menu()
             return
 
         letter = str(event.char or "").strip().upper()
@@ -1232,6 +1348,42 @@ class HangmanApp:
         )
         self.player = outcome["player"]
         self.progress_var.set(self._build_player_summary(self.player))
+        if outcome["progression_snapshot"] is not None:
+            self.primary_goal_snapshot = outcome["progression_snapshot"]
+
+        guided_progress = None
+        guided_recommendation = None
+        if self.guided_session is not None and self.guided_session.get("status") == "active":
+            round_record = {
+                "title": outcome["title"],
+                "result_message": outcome["result_message"],
+                "category": self.session.category,
+                "difficulty": self.session.difficulty,
+                "won": reason == "won",
+                "end_reason": reason,
+                "score_earned": outcome["score_earned"],
+                "completed_goals": outcome["completed_goals"],
+                "mastery_updates": outcome["mastery_updates"],
+            }
+            self.guided_session["rounds"].append(round_record)
+            guided_progress = evaluate_guided_objective(
+                self.guided_session["objective"],
+                outcome["player"],
+                outcome["dashboard"],
+                outcome["progression_snapshot"],
+            )
+            guided_recommendation = build_guided_recommendation(
+                self.guided_session["objective"],
+                outcome["player"],
+                outcome["dashboard"],
+                outcome["progression_snapshot"],
+            )
+            self.guided_session["objective_state"] = guided_progress
+            self.guided_session["recommendation"] = guided_recommendation
+            if guided_progress is not None and guided_progress.get("completed"):
+                self.guided_session["status"] = "completed"
+                self.show_guided_session_summary()
+                return
 
         self.show_round_summary(
             outcome["title"],
@@ -1242,6 +1394,8 @@ class HangmanApp:
             outcome["completed_goals"],
             outcome["mastery_updates"],
             outcome["breakdown"],
+            guided_progress=guided_progress,
+            guided_recommendation=guided_recommendation,
         )
 
     def show_round_summary(
@@ -1254,6 +1408,9 @@ class HangmanApp:
         completed_goals,
         mastery_updates,
         breakdown,
+        *,
+        guided_progress=None,
+        guided_recommendation=None,
     ):
         self.clear_screen()
         tone_bg = SUCCESS_BG if title == "Victoire" else WARNING_BG if title == "Temps ecoule" else ERROR_BG
@@ -1358,6 +1515,42 @@ class HangmanApp:
                 justify="left",
             ).pack(anchor="w", fill="x", pady=(8, 0))
 
+        if guided_progress is not None:
+            session_area = self._card(container, bg="#eef6ff", border="#c8d9f1", padx=18, pady=18)
+            session_area.pack(fill="x", pady=(14, 0))
+            self._section_title(session_area, "Session guidee")
+            self._label(
+                session_area,
+                text=(
+                    f"{guided_progress['title']} : {guided_progress['progress_text']}. "
+                    f"{guided_progress['detail']}"
+                ),
+                fg=ACCENT_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x")
+            if guided_recommendation is not None:
+                recommendation_text = (
+                    f"{format_category_name(guided_recommendation['category'])} "
+                    f"en {guided_recommendation['difficulty']}."
+                    if guided_recommendation.get("category") and guided_recommendation.get("difficulty")
+                    else "Reprendre le reglage conseille."
+                )
+                self._section_title(session_area, "Prochaine manche recommandee")
+                self._label(
+                    session_area,
+                    text=recommendation_text,
+                    font=("Arial", 11, "bold"),
+                    wraplength=760,
+                    justify="left",
+                ).pack(anchor="w", fill="x")
+                self._label(
+                    session_area,
+                    text=guided_recommendation["detail"],
+                    wraplength=760,
+                    justify="left",
+                ).pack(anchor="w", fill="x", pady=(4, 0))
+
         if progression_snapshot is not None:
             goal_area = self._card(container, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
             goal_area.pack(fill="x", pady=(14, 0))
@@ -1409,26 +1602,40 @@ class HangmanApp:
         buttons = self._frame(container, bg=APP_BG)
         buttons.pack(fill="x", pady=(16, 0))
 
-        tk.Button(
-            buttons,
-            text="Rejouer meme reglage",
-            command=self.replay_current_selection,
-            width=20,
-        ).pack(side="left", padx=(0, 8))
-        if progression_snapshot is not None and progression_snapshot.get("primary_goal") is not None:
-            self.primary_goal_snapshot = progression_snapshot
+        if guided_progress is not None:
             tk.Button(
                 buttons,
-                text="Suivre l'objectif recommande",
-                command=self.start_primary_goal,
+                text="Continuer la session",
+                command=self._continue_guided_session,
                 width=24,
             ).pack(side="left", padx=(0, 8))
-        tk.Button(
-            buttons,
-            text="Changer categorie",
-            command=self.return_to_menu,
-            width=18,
-        ).pack(side="left", padx=(0, 8))
+            tk.Button(
+                buttons,
+                text="Arreter la session",
+                command=self._stop_guided_session_after_round,
+                width=20,
+            ).pack(side="left", padx=(0, 8))
+        else:
+            tk.Button(
+                buttons,
+                text="Rejouer meme reglage",
+                command=self.replay_current_selection,
+                width=20,
+            ).pack(side="left", padx=(0, 8))
+            if progression_snapshot is not None and progression_snapshot.get("primary_goal") is not None:
+                self.primary_goal_snapshot = progression_snapshot
+                tk.Button(
+                    buttons,
+                    text="Session objectif",
+                    command=self.start_guided_primary_goal_session,
+                    width=18,
+                ).pack(side="left", padx=(0, 8))
+            tk.Button(
+                buttons,
+                text="Changer categorie",
+                command=self.return_to_menu,
+                width=18,
+            ).pack(side="left", padx=(0, 8))
         tk.Button(buttons, text="Profil", command=self.open_player_dashboard, width=14).pack(
             side="left",
             padx=(0, 8),
@@ -1441,10 +1648,180 @@ class HangmanApp:
         footer.pack(fill="x", pady=(14, 0))
         tk.Button(footer, text="Quitter", command=self.close, width=12).pack()
 
-        self.root.bind("<Return>", lambda _event: self.replay_current_selection())
+        if guided_progress is not None:
+            self.root.bind("<Return>", lambda _event: self._continue_guided_session())
+        else:
+            self.root.bind("<Return>", lambda _event: self.replay_current_selection())
+
+    def show_guided_session_summary(self):
+        if self.guided_session is None:
+            self.show_main_menu()
+            return
+
+        self.clear_screen()
+        objective_state = self.guided_session.get("objective_state") or self.guided_session["objective"]
+        rounds = self.guided_session.get("rounds", ())
+        completed = self.guided_session.get("status") == "completed"
+        tone_bg = SUCCESS_BG if completed else WARNING_BG
+        tone_fg = SUCCESS_COLOR if completed else WARNING_COLOR
+        wins = sum(1 for round_data in rounds if round_data.get("won"))
+        total_score = sum(int(round_data.get("score_earned") or 0) for round_data in rounds)
+        goal_titles = []
+        mastery_titles = []
+        for round_data in rounds:
+            for goal in round_data.get("completed_goals", ()):
+                title = goal.get("title")
+                if title and title not in goal_titles:
+                    goal_titles.append(title)
+            for update in round_data.get("mastery_updates", ()):
+                title = update.get("title")
+                if title and title not in mastery_titles:
+                    mastery_titles.append(title)
+
+        container = self._frame(self.root, bg=APP_BG, padx=24, pady=24)
+        container.pack(fill="both", expand=True)
+
+        hero = self._card(container, bg=tone_bg, border=tone_fg, padx=20, pady=18)
+        hero.pack(fill="x")
+        self._label(
+            hero,
+            text="Objectif atteint" if completed else "Session guidee interrompue",
+            bg=tone_bg,
+            fg=tone_fg,
+            font=("Georgia", 24, "bold"),
+        ).pack(anchor="w")
+        self._label(
+            hero,
+            text=objective_state["title"],
+            bg=tone_bg,
+            font=("Arial", 11, "bold"),
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 6))
+        self._label(
+            hero,
+            text=(
+                f"Progression session : {self.guided_session['initial_progress_text']} "
+                f"-> {objective_state['progress_text']}."
+            ),
+            bg=tone_bg,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+
+        self._render_metric_cards(
+            container,
+            [
+                {
+                    "label": "Manches jouees",
+                    "value": str(len(rounds)),
+                    "bg": "#f7f9fc",
+                    "border": "#d7deea",
+                },
+                {
+                    "label": "Victoires",
+                    "value": str(wins),
+                    "bg": SUCCESS_BG,
+                    "border": SUCCESS_COLOR,
+                    "fg": SUCCESS_COLOR,
+                },
+                {
+                    "label": "Score session",
+                    "value": f"{total_score} pts",
+                    "bg": "#eef6ff",
+                    "border": "#c8d9f1",
+                    "fg": ACCENT_COLOR,
+                },
+            ],
+        )
+
+        details = self._card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        details.pack(fill="x")
+        self._section_title(details, "Resultat")
+        self._label(
+            details,
+            text=objective_state["detail"],
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        if rounds:
+            last_round = rounds[-1]
+            self._label(
+                details,
+                text=(
+                    f"Derniere manche : {last_round['title'].lower()} sur "
+                    f"{format_category_name(last_round['category'])} en {last_round['difficulty']} "
+                    f"({last_round['score_earned']} pts)."
+                ),
+                fg=ACCENT_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
+        if goal_titles:
+            self._label(
+                details,
+                text="Objectifs valides pendant la session : " + ", ".join(goal_titles) + ".",
+                fg=SUCCESS_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
+        if mastery_titles:
+            self._label(
+                details,
+                text="Paliers de maitrise atteints : " + ", ".join(mastery_titles) + ".",
+                fg=SUCCESS_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
+
+        if rounds:
+            rounds_card = self._card(container, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
+            rounds_card.pack(fill="x", pady=(14, 0))
+            self._section_title(rounds_card, "Trace de session")
+            for round_index, round_data in enumerate(rounds, start=1):
+                self._label(
+                    rounds_card,
+                    text=(
+                        f"Manche {round_index} : {format_category_name(round_data['category'])} / "
+                        f"{round_data['difficulty']} / {round_data['title']} / "
+                        f"{round_data['score_earned']} pts"
+                    ),
+                    wraplength=760,
+                    justify="left",
+                ).pack(anchor="w", fill="x", pady=2)
+
+        buttons = self._frame(container, bg=APP_BG)
+        buttons.pack(fill="x", pady=(16, 0))
+        if self.primary_goal_snapshot is not None and self.primary_goal_snapshot.get("primary_goal") is not None:
+            tk.Button(
+                buttons,
+                text="Session objectif",
+                command=self.start_guided_primary_goal_session,
+                width=18,
+            ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            buttons,
+            text="Retour accueil",
+            command=self.return_to_menu,
+            width=18,
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(buttons, text="Profil", command=self.open_player_dashboard, width=14).pack(
+            side="left",
+            padx=(0, 8),
+        )
+        tk.Button(buttons, text="Classement", command=self.show_leaderboard, width=14).pack(
+            side="left"
+        )
+
+        self.root.bind("<Return>", lambda _event: self.return_to_menu())
 
     def return_to_menu(self):
-        self.show_main_menu()
+        banner_message = ""
+        if self.guided_session is not None and self.guided_session.get("status") == "active":
+            banner_message = "Session guidee arretee."
+        self.guided_session = None
+        self.session = None
+        self.show_main_menu(banner_message=banner_message)
 
     def show_player_dashboard(self, player_id):
         bundle = get_progression_bundle({"id": player_id}, self.category_availability)

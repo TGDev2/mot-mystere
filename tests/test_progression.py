@@ -39,8 +39,13 @@ class ProgressionTestCase(unittest.TestCase):
         self.assertEqual(mastery["focus_pair"]["category"], "animaux")
         self.assertEqual(mastery["focus_pair"]["difficulty"], "Facile")
         self.assertEqual(goals["validation_board"]["progress_text"], "0/6 paires validees")
+        self.assertEqual(goals["validation_board"]["family"], "validation_board")
+        self.assertEqual(goals["validation_board"]["current_value"], 0)
+        self.assertEqual(goals["validation_board"]["target_value"], 6)
         self.assertEqual(challenges[0]["title"], "Defi de validation")
         self.assertEqual(challenges[0]["progress_text"], "0/1 victoire(s)")
+        self.assertEqual(challenges[0]["family"], "challenge_pair")
+        self.assertEqual(challenges[0]["target_value"], 1)
 
     def test_snapshot_recommends_next_unvalidated_pair_then_mastery(self):
         snapshot = build_progression_snapshot(
@@ -69,7 +74,11 @@ class ProgressionTestCase(unittest.TestCase):
         self.assertEqual(mastery["mastery_focus_pair"]["difficulty"], "Facile")
         self.assertEqual(goals["mastery_board"]["progress_text"], "1/6 paires maitrisees")
         self.assertEqual(goals["score_milestone"]["progress_text"], "260/500 pts")
+        self.assertEqual(goals["score_milestone"]["family"], "score_milestone")
+        self.assertEqual(goals["score_milestone"]["target_value"], 500)
         self.assertEqual(challenges["challenge_recent_form_3"]["progress_text"], "2/3 victoire(s) recentes")
+        self.assertEqual(challenges["challenge_recent_form_3"]["family"], "challenge_recent_form")
+        self.assertEqual(challenges["challenge_recent_form_3"]["target_value"], 3)
         self.assertEqual(snapshot["featured_challenge"]["key"], "challenge_pair_pays_Difficile_1")
 
     def test_new_mastery_states_detect_validation_and_mastery(self):

@@ -2,7 +2,16 @@ import unittest
 from pathlib import Path
 
 from database import setup_database
-from solo_game_service import create_session_for_player, prepare_player, resolve_round
+from progression import build_progression_snapshot
+from solo_game_service import (
+    build_guided_objective,
+    build_guided_recommendation,
+    create_session_for_player,
+    evaluate_guided_objective,
+    get_progression_bundle,
+    prepare_player,
+    resolve_round,
+)
 
 
 class FixedChoice:
@@ -80,6 +89,92 @@ class SoloGameServiceTestCase(unittest.TestCase):
             outcome["progression_snapshot"]["primary_goal"]["key"],
             "mastery_board",
         )
+
+    def test_guided_objective_maps_primary_goal_to_concrete_pair_target(self):
+        bundle = get_progression_bundle(
+            self.player,
+            self.category_availability,
+            db_path=self.db_path,
+        )
+
+        objective = build_guided_objective(bundle["snapshot"], source="primary_goal")
+        recommendation = build_guided_recommendation(
+            objective,
+            bundle["player"],
+            bundle["dashboard"],
+            bundle["snapshot"],
+        )
+
+        self.assertEqual(objective["metric"], "pair_wins")
+        self.assertEqual(objective["title"], "Valider Animaux en Facile")
+        self.assertEqual(objective["target_value"], 1)
+        self.assertEqual(objective["progress_text"], "0/1 victoire(s)")
+        self.assertEqual(recommendation["category"], "animaux")
+        self.assertEqual(recommendation["difficulty"], "Facile")
+
+    def test_guided_objective_completes_after_target_win(self):
+        bundle = get_progression_bundle(
+            self.player,
+            self.category_availability,
+            db_path=self.db_path,
+        )
+        objective = build_guided_objective(bundle["snapshot"], source="primary_goal")
+
+        session = create_session_for_player(
+            self.player["id"],
+            self.categories,
+            "animaux",
+            "Facile",
+            rng=FixedChoice(),
+            db_path=self.db_path,
+        )
+        for letter in "CHAT":
+            session.guess(letter)
+
+        outcome = resolve_round(
+            self.player,
+            session,
+            "won",
+            self.category_availability,
+            db_path=self.db_path,
+        )
+        progress = evaluate_guided_objective(
+            objective,
+            outcome["player"],
+            outcome["dashboard"],
+            outcome["progression_snapshot"],
+        )
+
+        self.assertTrue(progress["completed"])
+        self.assertEqual(progress["progress_text"], "1/1 victoire(s)")
+
+    def test_guided_recommendation_handles_recent_form_objective(self):
+        snapshot = build_progression_snapshot(
+            {"score_total": 260},
+            {
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 4, "wins": 3},
+                ],
+                "favorite_category": {"category": "animaux"},
+                "best_difficulty": {"difficulty": "Facile"},
+                "recent_form": {"recent_games": 5, "recent_wins": 2},
+            },
+            self.category_availability,
+        )
+
+        objective = build_guided_objective(snapshot, source="featured_challenge")
+        recommendation = build_guided_recommendation(
+            objective,
+            {"score_total": 260},
+            {"recent_form": {"recent_games": 5, "recent_wins": 2}},
+            snapshot,
+        )
+
+        self.assertEqual(objective["metric"], "recent_wins")
+        self.assertEqual(objective["target_value"], 3)
+        self.assertEqual(recommendation["category"], "animaux")
+        self.assertEqual(recommendation["difficulty"], "Facile")
+        self.assertIn("Encore 1 victoire(s) recentes", recommendation["detail"])
 
 
 if __name__ == "__main__":

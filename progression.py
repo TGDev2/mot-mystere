@@ -223,11 +223,14 @@ def _build_validation_goal(mastery):
 
     return {
         "key": "validation_board",
+        "family": "validation_board",
         "title": "Carte de validation",
         "progress_text": f"{validated_pairs}/{total_pairs} paires validees",
         "detail": detail,
         "completed": validated_pairs == total_pairs and total_pairs > 0,
         "ratio": _ratio(validated_pairs, total_pairs),
+        "current_value": validated_pairs,
+        "target_value": total_pairs,
         "category": category,
         "difficulty": difficulty,
         "cta_text": "Valider la paire",
@@ -253,11 +256,14 @@ def _build_mastery_goal(mastery):
 
     return {
         "key": "mastery_board",
+        "family": "mastery_board",
         "title": "Carte de maitrise",
         "progress_text": f"{mastered_pairs}/{total_pairs} paires maitrisees",
         "detail": detail,
         "completed": mastered_pairs == total_pairs and total_pairs > 0,
         "ratio": _ratio(mastered_pairs, total_pairs),
+        "current_value": mastered_pairs,
+        "target_value": total_pairs,
         "category": category,
         "difficulty": difficulty,
         "cta_text": "Maitriser la paire",
@@ -287,11 +293,14 @@ def _build_score_goal(player, dashboard, category_availability, mastery):
 
     return {
         "key": "score_milestone",
+        "family": "score_milestone",
         "title": "Cap de score",
         "progress_text": f"{score_total}/{next_target} pts",
         "detail": f"Encore {remaining} pts pour atteindre le prochain cap.",
         "completed": False,
         "ratio": _ratio(score_total - previous_target, next_target - previous_target),
+        "current_value": score_total,
+        "target_value": next_target,
         "category": focus_category,
         "difficulty": focus_difficulty,
         "cta_text": "Jouer pour scorer",
@@ -324,11 +333,14 @@ def _build_pair_challenge(mastery):
         if focus_pair is None:
             return {
                 "key": "challenge_pair_mastery",
+                "family": "challenge_pair",
                 "title": "Defi de maitrise",
                 "progress_text": "Carte complete",
                 "detail": "Toutes les paires categorie/niveau sont deja maitrisees.",
                 "completed": True,
                 "ratio": 1.0,
+                "current_value": MASTERED_WINS,
+                "target_value": MASTERED_WINS,
                 "category": None,
                 "difficulty": None,
                 "cta_text": "Continuer a jouer",
@@ -345,11 +357,14 @@ def _build_pair_challenge(mastery):
 
     return {
         "key": f"challenge_pair_{focus_pair['category']}_{focus_pair['difficulty']}_{target}",
+        "family": "challenge_pair",
         "title": title,
         "progress_text": f"{min(wins, target)}/{target} victoire(s)",
         "detail": detail,
         "completed": wins >= target,
         "ratio": _ratio(min(wins, target), target),
+        "current_value": min(wins, target),
+        "target_value": target,
         "category": focus_pair["category"],
         "difficulty": focus_pair["difficulty"],
         "cta_text": cta_text,
@@ -386,11 +401,14 @@ def _build_form_challenge(dashboard, category_availability, mastery):
 
     return {
         "key": f"challenge_recent_form_{target}",
+        "family": "challenge_recent_form",
         "title": "Defi de regularite",
         "progress_text": f"{min(recent_wins, target)}/{target} victoire(s) recentes",
         "detail": detail,
         "completed": recent_wins >= target,
         "ratio": _ratio(min(recent_wins, target), target),
+        "current_value": min(recent_wins, target),
+        "target_value": target,
         "category": category,
         "difficulty": difficulty,
         "cta_text": "Enchainer une victoire",
@@ -401,6 +419,7 @@ def _build_score_challenge(player, dashboard, category_availability, mastery):
     score_goal = _build_score_goal(player, dashboard, category_availability, mastery)
     _, next_target = _pick_score_target(_as_int((player or {}).get("score_total")))
     score_goal["key"] = f"challenge_score_{next_target}"
+    score_goal["family"] = "challenge_score"
     score_goal["title"] = "Defi de score"
     score_goal["detail"] = (
         f"{score_goal['detail']} Priorite ideale : "

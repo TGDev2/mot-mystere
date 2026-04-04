@@ -20,6 +20,7 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 - Carte de maitrise categorie x difficulte avec paires a valider puis a maitriser.
 - Objectifs explicites avec prochain palier recommande sur l'accueil, en manche et en fin de partie.
 - Defis du moment derives de la maitrise, de la regularite recente et du prochain cap de score.
+- Session guidee optionnelle depuis l'accueil et la fin de manche pour enchainer plusieurs manches vers un objectif concret.
 - Classement local persistant avec score total, meilleur score et taux de victoire.
 - Saisie clavier A-Z active pendant la partie et ecran de fin de manche oriente progression.
 
