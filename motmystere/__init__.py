@@ -1,0 +1,1 @@
+"""Package principal de MotMystere."""

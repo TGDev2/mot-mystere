@@ -1,9 +1,11 @@
 import unittest
 from pathlib import Path
+import shutil
+import uuid
 
-from database import setup_database
-from progression import build_progression_snapshot
-from solo_game_service import (
+from motmystere.database import setup_database
+from motmystere.progression import build_progression_snapshot
+from motmystere.solo_game_service import (
     build_guided_objective,
     build_guided_recommendation,
     create_session_for_player,
@@ -14,6 +16,14 @@ from solo_game_service import (
 )
 
 
+def _create_runtime_dir(prefix):
+    runtime_root = Path(__file__).resolve().parents[1] / ".tmp" / "tests"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    runtime_dir = runtime_root / f"{prefix}{uuid.uuid4().hex}"
+    runtime_dir.mkdir(parents=True, exist_ok=False)
+    return runtime_dir
+
+
 class FixedChoice:
     def choice(self, values):
         return values[0]
@@ -21,9 +31,9 @@ class FixedChoice:
 
 class SoloGameServiceTestCase(unittest.TestCase):
     def setUp(self):
-        self.db_path = Path(__file__).parent / "service_runtime.db"
-        if self.db_path.exists():
-            self.db_path.unlink()
+        self.runtime_dir = _create_runtime_dir("motmystere_service_")
+        self.addCleanup(shutil.rmtree, self.runtime_dir, True)
+        self.db_path = self.runtime_dir / "service_runtime.db"
         setup_database(self.db_path)
         self.categories = {"animaux": ["CHAT", "LION", "OURS", "LOUP", "VACHE"]}
         self.category_availability = {"animaux": ("Facile",)}

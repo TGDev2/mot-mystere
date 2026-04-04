@@ -4,9 +4,9 @@
 
 La couche presentation est decoupee pour isoler trois responsabilites:
 
-- `game_logic.py` orchestre l'etat applicatif, la navigation et les transitions de manche.
-- `presentation/navigation.py` formalise les routes d'ecran et d'overlay, avec un routeur testable.
-- `presentation/screens/` contient un module par ecran cle ou overlay.
+- `motmystere/game_logic.py` orchestre l'etat applicatif, la navigation et les transitions de manche.
+- `motmystere/presentation/navigation.py` formalise les routes d'ecran et d'overlay, avec un routeur testable.
+- `motmystere/presentation/screens/` contient un module par ecran cle ou overlay.
 
 ## Decoupage
 
@@ -22,7 +22,7 @@ Il ne construit plus directement les ecrans.
 
 ### Shell UI partage
 
-`presentation/shell.py` centralise les briques de rendu reutilisables:
+`motmystere/presentation/shell.py` centralise les briques de rendu reutilisables:
 
 - cartes, labels, sections ;
 - cartes de progression et defis ;
@@ -33,7 +33,7 @@ Une evolution visuelle transverse passe par ce shell, pas par chaque ecran.
 
 ### Ecrans
 
-Les ecrans sont isoles dans `presentation/screens/`:
+Les ecrans sont isoles dans `motmystere/presentation/screens/`:
 
 - `main_menu.py` : accueil, reprise rapide, formulaire de lancement.
 - `game_round.py` : manche en cours.
@@ -45,7 +45,7 @@ Chaque module ne gere que sa composition visuelle et les callbacks qu'il expose.
 
 ## Contrat de navigation
 
-Les routes explicites sont definies dans `presentation/navigation.py`:
+Les routes explicites sont definies dans `motmystere/presentation/navigation.py`:
 
 - `main_menu`
 - `round`

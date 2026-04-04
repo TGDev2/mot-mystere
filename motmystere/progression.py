@@ -1,4 +1,4 @@
-from categories import DIFFICULTY_LEVELS, format_category_name
+from .categories import DIFFICULTY_LEVELS, format_category_name
 
 
 SCORE_MILESTONES = (100, 250, 500, 900, 1400, 2100, 3200, 4800, 7000)

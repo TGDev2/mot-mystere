@@ -1,6 +1,6 @@
 import unittest
 
-from scoring import build_score_breakdown, get_time_limit_for_difficulty
+from motmystere.scoring import build_score_breakdown, get_time_limit_for_difficulty
 
 
 class ScoringTestCase(unittest.TestCase):

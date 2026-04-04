@@ -1,7 +1,7 @@
 import unittest
 
-from game_session import GameSession
-from scoring import get_time_limit_for_difficulty
+from motmystere.game_session import GameSession
+from motmystere.scoring import get_time_limit_for_difficulty
 
 
 class FixedChoice:

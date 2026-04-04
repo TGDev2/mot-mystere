@@ -1,7 +1,7 @@
 import tkinter as tk
 
-from database import get_leaderboard_data
-from presentation.theme import ACCENT_BORDER, APP_BG, CARD_BG, HERO_BG, SUBTLE_TEXT
+from ...database import get_leaderboard_data
+from ..theme import ACCENT_BORDER, APP_BG, CARD_BG, HERO_BG, SUBTLE_TEXT
 
 
 class LeaderboardScreen:

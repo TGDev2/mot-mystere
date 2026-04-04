@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from app_paths import get_resource_directory, get_word_packs_directory
+from .app_paths import get_resource_directory, get_word_packs_directory
 
 
 BASE_DIR = get_resource_directory()

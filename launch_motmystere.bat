@@ -10,13 +10,13 @@ if exist "%ROOT_DIR%dist\MotMystere.exe" (
 
 where pyw >nul 2>nul
 if %errorlevel%==0 (
-    start "" pyw -3 "%ROOT_DIR%main.py"
+    start "" /D "%ROOT_DIR%" pyw -3 -m motmystere
     exit /b 0
 )
 
 where pythonw >nul 2>nul
 if %errorlevel%==0 (
-    start "" pythonw "%ROOT_DIR%main.py"
+    start "" /D "%ROOT_DIR%" pythonw -m motmystere
     exit /b 0
 )
 

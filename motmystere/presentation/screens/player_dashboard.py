@@ -1,10 +1,10 @@
 import tkinter as tk
 from tkinter import messagebox
 
-from categories import format_category_name
-from presentation.formatters import format_end_reason, format_played_at
-from presentation.theme import ACCENT_BORDER, ACCENT_COLOR, APP_BG, CARD_BG, HERO_BG, MUTED_BG
-from solo_game_service import get_progression_bundle
+from ...categories import format_category_name
+from ...solo_game_service import get_progression_bundle
+from ..formatters import format_end_reason, format_played_at
+from ..theme import ACCENT_BORDER, ACCENT_COLOR, APP_BG, CARD_BG, HERO_BG, MUTED_BG
 
 
 class PlayerDashboardScreen:

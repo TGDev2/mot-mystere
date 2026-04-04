@@ -29,8 +29,10 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 ### Depuis le code source
 
 ```bash
-python main.py
+python -m motmystere
 ```
+
+`python main.py` reste disponible comme point d'entree de compatibilite.
 
 ### Depuis Windows sans console
 
@@ -39,8 +41,8 @@ Double-cliquez sur `launch_motmystere.bat`.
 Le lanceur essaie, dans cet ordre :
 
 1. `dist/MotMystere.exe` si un build Windows existe deja
-2. `pyw -3 main.py`
-3. `pythonw main.py`
+2. `pyw -3 -m motmystere`
+3. `pythonw -m motmystere`
 
 ## Construire un executable Windows
 
@@ -119,22 +121,25 @@ python -m unittest discover -s tests
 Pour verifier rapidement le parcours critique sans ouvrir l'interface :
 
 ```bash
-python main.py --smoke-test
+python -m motmystere --smoke-test
 ```
 
 Le contrat de navigation presentation est aussi couvert par `tests/test_presentation_navigation.py`.
 
 ## Structure
 
-- `main.py` : point d'entree de l'application
-- `game_logic.py` : orchestrateur d'etat, navigation et callbacks UI
-- `presentation/` : routeur, shell de rendu partage et ecrans Tkinter modules
-- `game_session.py` : regles de partie et etat de manche
-- `categories.py` : chargement du catalogue, validation des packs et calibration des mots
-- `scoring.py` : configuration de difficulte et calcul du score
-- `database.py` : persistance SQLite, historique et classement
-- `solo_game_service.py` : orchestration testable de la rotation, de la resolution de manche et de la progression
-- `release_smoke.py` : verification smoke test du parcours critique
+- `motmystere/` : package principal de l'application
+- `motmystere/__main__.py` : point d'entree executable via `python -m motmystere`
+- `motmystere/game_logic.py` : orchestrateur d'etat, navigation et callbacks UI
+- `motmystere/presentation/` : routeur, shell de rendu partage et ecrans Tkinter modules
+- `motmystere/assets/wordlists/` : listes de mots integrees emballees avec le jeu
+- `motmystere/game_session.py` : regles de partie et etat de manche
+- `motmystere/categories.py` : chargement du catalogue, validation des packs et calibration des mots
+- `motmystere/scoring.py` : configuration de difficulte et calcul du score
+- `motmystere/database.py` : persistance SQLite, historique et classement
+- `motmystere/solo_game_service.py` : orchestration testable de la rotation, de la resolution de manche et de la progression
+- `motmystere/release_smoke.py` : verification smoke test du parcours critique
+- `experiments/server.py` : serveur TCP experimental conserve hors du parcours solo principal
 - `docs/presentation-architecture.md` : contrat de decoupage de la couche presentation
 - `build_windows.ps1` / `motmystere.spec` : build Windows du jeu
 

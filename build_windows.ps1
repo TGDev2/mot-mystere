@@ -17,7 +17,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Les tests unitaires ont echoue : build interrompu."
 }
 
-$sourceSmokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) "MotMystereSmokeSource"
+$runtimeRoot = Join-Path $projectRoot ".tmp"
+if (-not (Test-Path $runtimeRoot)) {
+    New-Item -ItemType Directory -Path $runtimeRoot | Out-Null
+}
+
+$sourceSmokeRoot = Join-Path $runtimeRoot "smoke-source"
 if (Test-Path $sourceSmokeRoot) {
     Remove-Item -LiteralPath $sourceSmokeRoot -Recurse -Force
 }
@@ -27,7 +32,7 @@ $env:MOTMYSTERE_DATA_DIR = $sourceSmokeRoot
 $env:MOTMYSTERE_DB_PATH = Join-Path $sourceSmokeRoot "hangman.db"
 
 try {
-    & python main.py --smoke-test
+    & python -m motmystere --smoke-test
     if ($LASTEXITCODE -ne 0) {
         throw "Le smoke test source a echoue : build interrompu."
     }
@@ -48,7 +53,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Le build Windows a echoue : PyInstaller n'a pas pu generer l'executable."
 }
 
-$smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) "MotMystereSmoke"
+$smokeRoot = Join-Path $runtimeRoot "smoke-build"
 if (Test-Path $smokeRoot) {
     Remove-Item -LiteralPath $smokeRoot -Recurse -Force
 }

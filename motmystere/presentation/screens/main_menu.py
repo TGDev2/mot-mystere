@@ -1,8 +1,8 @@
 import tkinter as tk
 
-from categories import format_category_name
-from presentation.formatters import format_played_at
-from presentation.theme import (
+from ...categories import format_category_name
+from ..formatters import format_played_at
+from ..theme import (
     ACCENT_BORDER,
     ACCENT_COLOR,
     APP_BG,

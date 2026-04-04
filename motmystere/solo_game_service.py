@@ -1,18 +1,18 @@
-from database import (
+from .database import (
     get_or_create_player,
     get_player_dashboard,
     get_word_rotation_state,
     record_game_result,
     save_word_rotation_state,
 )
-from categories import format_category_name
-from game_session import GameSession, get_available_word_profiles
-from progression import (
+from .categories import format_category_name
+from .game_session import GameSession, get_available_word_profiles
+from .progression import (
     build_progression_snapshot,
     get_newly_completed_goals,
     get_newly_reached_mastery_states,
 )
-from scoring import build_score_breakdown
+from .scoring import build_score_breakdown
 
 
 def prepare_player(name, db_path=None):

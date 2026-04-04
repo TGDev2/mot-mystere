@@ -4,7 +4,8 @@ from pathlib import Path
 
 
 project_dir = Path(SPECPATH)
-text_assets = [(str(path), ".") for path in project_dir.glob("*.txt")]
+assets_dir = project_dir / "motmystere" / "assets" / "wordlists"
+text_assets = [(str(path), "motmystere/assets/wordlists") for path in assets_dir.glob("*.txt")]
 
 
 a = Analysis(

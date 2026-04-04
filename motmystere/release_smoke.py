@@ -1,13 +1,14 @@
+import os
 from pathlib import Path
-import tempfile
 
-from categories import get_supported_difficulties, load_categories
-from database import (
+from .app_paths import get_database_path
+from .categories import get_supported_difficulties, load_categories
+from .database import (
     get_leaderboard_data,
     get_player_dashboard,
     setup_database,
 )
-from solo_game_service import create_session_for_player, prepare_player, resolve_round
+from .solo_game_service import create_session_for_player, prepare_player, resolve_round
 
 
 class FixedChoice:
@@ -16,7 +17,9 @@ class FixedChoice:
 
 
 def get_default_smoke_db_path():
-    return Path(tempfile.gettempdir()) / "motmystere_smoke_runtime.db"
+    if os.environ.get("MOTMYSTERE_DB_PATH") or os.environ.get("MOTMYSTERE_DATA_DIR"):
+        return Path(get_database_path())
+    return Path(__file__).resolve().parents[1] / ".tmp" / "smoke" / "motmystere_smoke_runtime.db"
 
 
 def _play_winning_round(session):

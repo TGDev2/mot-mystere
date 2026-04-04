@@ -1,14 +1,24 @@
 from pathlib import Path
+import shutil
 import unittest
+import uuid
 
-from release_smoke import run_release_smoke_test
+from motmystere.release_smoke import run_release_smoke_test
+
+
+def _create_runtime_dir(prefix):
+    runtime_root = Path(__file__).resolve().parents[1] / ".tmp" / "tests"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    runtime_dir = runtime_root / f"{prefix}{uuid.uuid4().hex}"
+    runtime_dir.mkdir(parents=True, exist_ok=False)
+    return runtime_dir
 
 
 class ReleaseSmokeTestCase(unittest.TestCase):
     def setUp(self):
-        self.db_path = Path(__file__).parent / "release_smoke_runtime.db"
-        if self.db_path.exists():
-            self.db_path.unlink()
+        self.runtime_dir = _create_runtime_dir("motmystere_smoke_")
+        self.addCleanup(shutil.rmtree, self.runtime_dir, True)
+        self.db_path = self.runtime_dir / "release_smoke_runtime.db"
 
     def tearDown(self):
         if self.db_path.exists():

@@ -1,6 +1,6 @@
 import unittest
 
-from progression import (
+from motmystere.progression import (
     build_progression_snapshot,
     get_newly_completed_goals,
     get_newly_reached_mastery_states,

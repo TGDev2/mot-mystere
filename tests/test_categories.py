@@ -4,7 +4,7 @@ import shutil
 import unittest
 import uuid
 
-from categories import (
+from motmystere.categories import (
     DIFFICULTY_LEVELS,
     build_word_profile,
     format_category_name,
@@ -33,6 +33,14 @@ FULL_SPECTRUM_WORDS = [
     "CHOCOLATIER",
 ]
 EASY_ONLY_WORDS = ["CHAT", "LION", "OURS", "LOUP", "VACHE"]
+
+
+def _create_runtime_dir(prefix):
+    runtime_root = Path(__file__).resolve().parents[1] / ".tmp" / "tests"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    runtime_dir = runtime_root / f"{prefix}{uuid.uuid4().hex}"
+    runtime_dir.mkdir(parents=True, exist_ok=False)
+    return runtime_dir
 
 
 class CategoriesTestCase(unittest.TestCase):
@@ -238,8 +246,7 @@ class CategoriesTestCase(unittest.TestCase):
         Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _make_workspace(self):
-        root_dir = Path(__file__).parent / f"catalog_runtime_{uuid.uuid4().hex}"
-        root_dir.mkdir()
+        root_dir = _create_runtime_dir("motmystere_catalog_")
         self.addCleanup(self._cleanup_workspace, root_dir)
         return root_dir
 

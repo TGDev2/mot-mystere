@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-from app_paths import get_database_path
+from .app_paths import get_database_path
 
 
 DEFAULT_DB_PATH = get_database_path()

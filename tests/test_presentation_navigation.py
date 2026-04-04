@@ -1,7 +1,7 @@
 import unittest
 
-from game_logic import HangmanApp
-from presentation.navigation import (
+from motmystere.game_logic import HangmanApp
+from motmystere.presentation.navigation import (
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
     MAIN_MENU_SCREEN,

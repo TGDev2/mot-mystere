@@ -1,4 +1,4 @@
-from presentation.navigation import (
+from .navigation import (
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
     MAIN_MENU_SCREEN,
@@ -7,7 +7,7 @@ from presentation.navigation import (
     ROUND_SCREEN,
     ROUND_SUMMARY_SCREEN,
 )
-from presentation.shell import PresentationShell
+from .shell import PresentationShell
 
 __all__ = [
     "GUIDED_SESSION_SUMMARY_SCREEN",

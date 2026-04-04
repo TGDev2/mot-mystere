@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 import random
 
-from categories import MIN_WORD_POOL_SIZE, WordProfile, get_supported_difficulties, get_words_for_difficulty
-from scoring import get_attempts_for_difficulty, get_time_limit_for_difficulty
+from .categories import MIN_WORD_POOL_SIZE, WordProfile, get_supported_difficulties, get_words_for_difficulty
+from .scoring import get_attempts_for_difficulty, get_time_limit_for_difficulty
 
 
 @dataclass

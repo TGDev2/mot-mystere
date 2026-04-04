@@ -1,6 +1,6 @@
 import tkinter as tk
 
-from presentation.theme import (
+from .theme import (
     ACCENT_BORDER,
     ACCENT_COLOR,
     CARD_BG,

@@ -2,14 +2,14 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox
 
-from categories import (
+from .categories import (
     MIN_WORD_POOL_SIZE,
     format_category_name,
     get_category_difficulty_breakdown,
     load_runtime_category_catalog,
 )
-from database import get_recent_players
-from presentation import (
+from .database import get_recent_players
+from .presentation import (
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
     MAIN_MENU_SCREEN,
@@ -19,16 +19,16 @@ from presentation import (
     ROUND_SCREEN,
     ROUND_SUMMARY_SCREEN,
 )
-from presentation.screens import (
+from .presentation.screens import (
     GameRoundScreen,
     LeaderboardScreen,
     MainMenuScreen,
     PlayerDashboardScreen,
     RoundSummaryScreen,
 )
-from presentation.theme import APP_BG
-from scoring import build_score_breakdown
-from solo_game_service import (
+from .presentation.theme import APP_BG
+from .scoring import build_score_breakdown
+from .solo_game_service import (
     build_guided_objective,
     build_guided_recommendation,
     create_session_for_player,
