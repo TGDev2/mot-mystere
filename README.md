@@ -122,16 +122,20 @@ Pour verifier rapidement le parcours critique sans ouvrir l'interface :
 python main.py --smoke-test
 ```
 
+Le contrat de navigation presentation est aussi couvert par `tests/test_presentation_navigation.py`.
+
 ## Structure
 
 - `main.py` : point d'entree de l'application
-- `game_logic.py` : interface Tkinter, historique joueur et ecrans principaux
+- `game_logic.py` : orchestrateur d'etat, navigation et callbacks UI
+- `presentation/` : routeur, shell de rendu partage et ecrans Tkinter modules
 - `game_session.py` : regles de partie et etat de manche
 - `categories.py` : chargement du catalogue, validation des packs et calibration des mots
 - `scoring.py` : configuration de difficulte et calcul du score
 - `database.py` : persistance SQLite, historique et classement
 - `solo_game_service.py` : orchestration testable de la rotation, de la resolution de manche et de la progression
 - `release_smoke.py` : verification smoke test du parcours critique
+- `docs/presentation-architecture.md` : contrat de decoupage de la couche presentation
 - `build_windows.ps1` / `motmystere.spec` : build Windows du jeu
 
 ## Positionnement actuel
