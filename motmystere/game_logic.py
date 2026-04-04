@@ -1,15 +1,16 @@
 from datetime import datetime
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 
+from .catalog_service import CatalogService, CatalogServiceError
 from .categories import (
     MIN_WORD_POOL_SIZE,
     format_category_name,
     get_category_difficulty_breakdown,
-    load_runtime_category_catalog,
 )
 from .database import get_recent_players
 from .presentation import (
+    CATALOG_OVERLAY,
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
     MAIN_MENU_SCREEN,
@@ -20,6 +21,7 @@ from .presentation import (
     ROUND_SUMMARY_SCREEN,
 )
 from .presentation.screens import (
+    CatalogScreen,
     GameRoundScreen,
     LeaderboardScreen,
     MainMenuScreen,
@@ -41,11 +43,14 @@ from .solo_game_service import (
 
 class HangmanApp:
     def __init__(self):
-        self.catalog = load_runtime_category_catalog()
-        self.categories = dict(self.catalog.categories)
-        self.category_availability = dict(self.catalog.category_availability)
-        if not self.categories:
-            raise RuntimeError("Aucune categorie exploitable n'est disponible.")
+        self.catalog_service = CatalogService()
+        self.catalog_window = None
+        self.catalog = None
+        self.categories = {}
+        self.category_availability = {}
+        self.category_display_names = {}
+        self.category_labels = {}
+        self._set_catalog(self.catalog_service.load_catalog())
 
         self.root = tk.Tk()
         self.root.title("MotMystere")
@@ -58,8 +63,6 @@ class HangmanApp:
         self.guided_session = None
         self.timer_job = None
         self.letter_buttons = {}
-        self.category_display_names = dict(self.catalog.display_names)
-        self.category_labels = self._build_category_label_map()
 
         first_category = next(iter(self.categories))
         first_difficulty = self.category_availability[first_category][0]
@@ -89,6 +92,7 @@ class HangmanApp:
         self.round_summary_screen = RoundSummaryScreen()
         self.player_dashboard_screen = PlayerDashboardScreen()
         self.leaderboard_screen = LeaderboardScreen()
+        self.catalog_screen = CatalogScreen()
         self.presentation_router = self._build_presentation_router()
 
         self.show_main_menu()
@@ -114,6 +118,59 @@ class HangmanApp:
         self.player_name_entry = None
         self.difficulty_menu = None
 
+    def _set_catalog(self, catalog):
+        self.catalog = catalog
+        self.categories = dict(catalog.categories)
+        self.category_availability = dict(catalog.category_availability)
+        self.category_display_names = dict(catalog.display_names)
+        self.category_labels = self._build_category_label_map()
+        if not self.categories:
+            raise RuntimeError("Aucune categorie exploitable n'est disponible.")
+
+    def _merge_banner_messages(self, *messages):
+        return " ".join(message.strip() for message in messages if message and message.strip())
+
+    def _sync_selection_after_catalog_reload(self, previous_category, previous_difficulty):
+        fallback_category = next(iter(self.categories))
+        selected_category = previous_category if previous_category in self.categories else fallback_category
+        available_difficulties = self.category_availability[selected_category]
+        selected_difficulty = (
+            previous_difficulty if previous_difficulty in available_difficulties else available_difficulties[0]
+        )
+
+        self.category_var.set(selected_category)
+        self.category_display_var.set(self._get_category_display_name(selected_category))
+        self.difficulty_var.set(selected_difficulty)
+
+        messages = []
+        if previous_category and previous_category not in self.categories:
+            messages.append(
+                "Le reglage precedent n'est plus disponible; une categorie de secours a ete selectionnee."
+            )
+        elif previous_category == selected_category and previous_difficulty not in available_difficulties:
+            messages.append(
+                "Le niveau precedent n'est plus disponible; le premier niveau jouable a ete selectionne."
+            )
+
+        return " ".join(messages)
+
+    def _reload_catalog_state(self, catalog, *, banner_message="", reopen_catalog=False):
+        previous_category = self.category_var.get()
+        previous_difficulty = self.difficulty_var.get()
+
+        self._set_catalog(catalog)
+        selection_message = self._sync_selection_after_catalog_reload(
+            previous_category,
+            previous_difficulty,
+        )
+        combined_message = self._merge_banner_messages(banner_message, selection_message)
+
+        self.show_main_menu(banner_message=combined_message)
+        if reopen_catalog:
+            self.show_catalog_overlay(banner_message=combined_message)
+
+        return combined_message
+
     def _build_presentation_router(self):
         return PresentationRouter(
             screens={
@@ -136,6 +193,10 @@ class HangmanApp:
                     player_id=player_id,
                 ),
                 LEADERBOARD_OVERLAY: lambda: self.leaderboard_screen.render(self),
+                CATALOG_OVERLAY: lambda banner_message="": self.catalog_screen.render(
+                    self,
+                    banner_message=banner_message,
+                ),
             },
         )
 
@@ -185,6 +246,60 @@ class HangmanApp:
         if remaining:
             lines.append(f"{remaining} autre(s) alerte(s) catalogue a verifier.")
         return lines
+
+    def show_catalog_overlay(self, banner_message=""):
+        self.presentation_router.open_overlay(
+            CATALOG_OVERLAY,
+            banner_message=banner_message,
+        )
+
+    def refresh_catalog_overlay(self):
+        self._reload_catalog_state(
+            self.catalog_service.load_catalog(),
+            banner_message="Catalogue actualise.",
+            reopen_catalog=True,
+        )
+
+    def toggle_catalog_pack(self, pack_id, enabled):
+        try:
+            catalog, updated_pack = self.catalog_service.set_pack_enabled(pack_id, enabled)
+        except CatalogServiceError as exc:
+            messagebox.showerror("Catalogue", str(exc))
+            return
+
+        status_message = (
+            f"Pack active : {updated_pack.label}."
+            if updated_pack.effective_enabled
+            else f"Pack desactive : {updated_pack.label}."
+        )
+        self._reload_catalog_state(
+            catalog,
+            banner_message=status_message,
+            reopen_catalog=True,
+        )
+
+    def import_catalog_pack(self):
+        selected_dir = filedialog.askdirectory(
+            parent=self.catalog_window if self.catalog_window is not None else self.root,
+            title="Choisir un dossier de pack",
+        )
+        if not selected_dir:
+            return
+
+        try:
+            catalog, pack_summary = self.catalog_service.import_pack_from_directory(selected_dir)
+        except CatalogServiceError as exc:
+            messagebox.showerror("Ajouter un pack", str(exc))
+            return
+
+        status_message = f"Pack ajoute : {pack_summary.label}."
+        if not pack_summary.effective_enabled:
+            status_message = f"{status_message} Il reste desactive tant que vous ne l'activez pas."
+        self._reload_catalog_state(
+            catalog,
+            banner_message=status_message,
+            reopen_catalog=True,
+        )
 
     def _get_progression_bundle(self):
         if self.player is None:

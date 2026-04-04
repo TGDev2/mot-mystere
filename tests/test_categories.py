@@ -148,6 +148,94 @@ class CategoriesTestCase(unittest.TestCase):
         self.assertEqual(bonus_summary.status, "disabled")
         self.assertEqual(bonus_summary.loaded_category_count, 0)
 
+    def test_pack_override_can_activate_manifest_disabled_pack(self):
+        root_dir = self._make_workspace()
+        base_dir = root_dir / "base"
+        packs_dir = root_dir / "packs"
+        base_dir.mkdir()
+        packs_dir.mkdir()
+        self._write_words(base_dir / "animaux.txt", FULL_SPECTRUM_WORDS)
+
+        bonus_pack_dir = packs_dir / "bonus"
+        bonus_pack_dir.mkdir()
+        self._write_words(bonus_pack_dir / "sports.txt", FULL_SPECTRUM_WORDS)
+        self._write_json(
+            bonus_pack_dir / "pack.json",
+            {
+                "id": "bonus",
+                "enabled": False,
+                "categories": [
+                    {
+                        "id": "sports",
+                        "source": "sports.txt",
+                    }
+                ],
+            },
+        )
+
+        catalog = load_category_catalog(
+            base_dir=base_dir,
+            local_pack_dir=packs_dir,
+            pack_overrides={"bonus": {"enabled": True}},
+        )
+        bonus_summary = next(
+            pack
+            for pack in catalog.pack_summaries
+            if pack.pack_id == "bonus"
+        )
+
+        self.assertIn("bonus::sports", catalog.categories)
+        self.assertEqual(bonus_summary.status, "active")
+        self.assertFalse(bonus_summary.declared_enabled)
+        self.assertTrue(bonus_summary.effective_enabled)
+        self.assertEqual(bonus_summary.loaded_category_count, 1)
+        self.assertEqual(bonus_summary.playable_category_count, 1)
+        self.assertEqual(bonus_summary.categories[0].available_difficulties, DIFFICULTY_LEVELS)
+
+    def test_pack_override_can_disable_active_pack_without_losing_metadata(self):
+        root_dir = self._make_workspace()
+        base_dir = root_dir / "base"
+        packs_dir = root_dir / "packs"
+        base_dir.mkdir()
+        packs_dir.mkdir()
+        self._write_words(base_dir / "animaux.txt", FULL_SPECTRUM_WORDS)
+
+        bonus_pack_dir = packs_dir / "bonus"
+        bonus_pack_dir.mkdir()
+        self._write_words(bonus_pack_dir / "sports.txt", FULL_SPECTRUM_WORDS)
+        self._write_json(
+            bonus_pack_dir / "pack.json",
+            {
+                "id": "bonus",
+                "categories": [
+                    {
+                        "id": "sports",
+                        "source": "sports.txt",
+                    }
+                ],
+            },
+        )
+
+        catalog = load_category_catalog(
+            base_dir=base_dir,
+            local_pack_dir=packs_dir,
+            pack_overrides={"bonus": {"enabled": False}},
+        )
+        bonus_summary = next(
+            pack
+            for pack in catalog.pack_summaries
+            if pack.pack_id == "bonus"
+        )
+
+        self.assertNotIn("bonus::sports", catalog.categories)
+        self.assertEqual(bonus_summary.status, "disabled")
+        self.assertTrue(bonus_summary.declared_enabled)
+        self.assertFalse(bonus_summary.effective_enabled)
+        self.assertEqual(bonus_summary.loaded_category_count, 0)
+        self.assertEqual(bonus_summary.playable_category_count, 1)
+        self.assertEqual(bonus_summary.categories[0].status, "disabled")
+        self.assertEqual(bonus_summary.categories[0].available_difficulties, DIFFICULTY_LEVELS)
+
     def test_invalid_pack_is_reported_without_loading_category(self):
         root_dir = self._make_workspace()
         base_dir = root_dir / "base"

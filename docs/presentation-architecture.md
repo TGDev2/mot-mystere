@@ -40,6 +40,7 @@ Les ecrans sont isoles dans `motmystere/presentation/screens/`:
 - `round_summary.py` : fin de manche et resume de session guidee.
 - `player_dashboard.py` : overlay profil.
 - `leaderboard.py` : overlay classement.
+- `catalog.py` : overlay de gestion du catalogue et des packs locaux.
 
 Chaque module ne gere que sa composition visuelle et les callbacks qu'il expose.
 
@@ -53,6 +54,7 @@ Les routes explicites sont definies dans `motmystere/presentation/navigation.py`
 - `guided_session_summary`
 - `player_dashboard`
 - `leaderboard`
+- `catalog`
 
 Le parcours critique attendu est:
 

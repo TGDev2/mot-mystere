@@ -8,6 +8,7 @@ ROUND_SUMMARY_SCREEN = "round_summary"
 GUIDED_SESSION_SUMMARY_SCREEN = "guided_session_summary"
 PLAYER_DASHBOARD_OVERLAY = "player_dashboard"
 LEADERBOARD_OVERLAY = "leaderboard"
+CATALOG_OVERLAY = "catalog"
 
 
 @dataclass(frozen=True)

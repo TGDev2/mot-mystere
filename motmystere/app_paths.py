@@ -39,5 +39,9 @@ def get_database_path():
     return get_data_directory() / "hangman.db"
 
 
+def get_catalog_state_path():
+    return get_data_directory() / "catalog_state.json"
+
+
 def get_word_packs_directory():
     return get_data_directory() / "packs"

@@ -128,6 +128,12 @@ class MainMenuScreen:
             wraplength=340,
             justify="left",
         ).pack(anchor="w", fill="x", pady=(6, 0))
+        tk.Button(
+            card,
+            text="Gerer le catalogue",
+            command=app.show_catalog_overlay,
+            width=20,
+        ).pack(anchor="w", pady=(10, 0))
         if issue_lines:
             ui.render_bullets(card, issue_lines, fg=fg, wraplength=320)
 

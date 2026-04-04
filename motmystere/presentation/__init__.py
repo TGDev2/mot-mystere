@@ -1,4 +1,5 @@
 from .navigation import (
+    CATALOG_OVERLAY,
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
     MAIN_MENU_SCREEN,
@@ -10,6 +11,7 @@ from .navigation import (
 from .shell import PresentationShell
 
 __all__ = [
+    "CATALOG_OVERLAY",
     "GUIDED_SESSION_SUMMARY_SCREEN",
     "LEADERBOARD_OVERLAY",
     "MAIN_MENU_SCREEN",

@@ -2,6 +2,7 @@ import unittest
 
 from motmystere.game_logic import HangmanApp
 from motmystere.presentation.navigation import (
+    CATALOG_OVERLAY,
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
     MAIN_MENU_SCREEN,
@@ -52,6 +53,7 @@ class PresentationNavigationTestCase(unittest.TestCase):
         )
         app.show_player_dashboard(7)
         app.show_leaderboard()
+        app.show_catalog_overlay(banner_message="Catalogue actualise.")
         app.show_guided_session_summary()
 
         self.assertEqual(
@@ -82,6 +84,7 @@ class PresentationNavigationTestCase(unittest.TestCase):
                 ),
                 ("overlay", PLAYER_DASHBOARD_OVERLAY, {"player_id": 7}),
                 ("overlay", LEADERBOARD_OVERLAY, {}),
+                ("overlay", CATALOG_OVERLAY, {"banner_message": "Catalogue actualise."}),
                 ("screen", GUIDED_SESSION_SUMMARY_SCREEN, {}),
             ],
         )
