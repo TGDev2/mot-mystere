@@ -130,6 +130,52 @@ class PresentationShell:
                 justify="left",
             ).pack(anchor="w", fill="x", pady=(6, 0))
 
+    def render_personalized_recommendation_card(
+        self,
+        parent,
+        recommendation,
+        *,
+        compact=False,
+        command=None,
+    ):
+        if recommendation is None:
+            return None
+
+        wraplength = 320 if compact else 760
+        card = self.card(parent, bg="#eef6ff", border="#c8d9f1", padx=14, pady=14)
+        card.pack(fill="x", pady=(6, 0))
+        self.label(
+            card,
+            text=f"Diagnostic dominant : {recommendation['driver_label']}",
+            bg="#eef6ff",
+            fg=ACCENT_COLOR,
+            font=("Arial", 9, "bold"),
+        ).pack(anchor="w")
+        self.label(
+            card,
+            text=recommendation["title"],
+            bg="#eef6ff",
+            font=("Arial", 11, "bold"),
+            wraplength=wraplength,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(2, 2))
+        self.label(
+            card,
+            text=recommendation["detail"],
+            bg="#eef6ff",
+            fg=SUBTLE_TEXT,
+            wraplength=wraplength,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        if command is not None and recommendation.get("cta_text"):
+            tk.Button(
+                card,
+                text=recommendation["cta_text"],
+                command=command,
+                width=16,
+            ).pack(anchor="w", pady=(10, 0))
+        return card
+
     def render_goal_cards(self, parent, goals, *, limit=3, compact=False):
         items = [dict(goal, kind="goal") for goal in goals]
         self.render_progress_cards(parent, items, limit=limit, compact=compact)

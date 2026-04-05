@@ -100,6 +100,43 @@ class PresentationNavigationTestCase(unittest.TestCase):
 
         self.assertEqual(app.difficulty_var.get(), "Facile")
 
+    def test_start_personalized_recommendation_syncs_selection_before_starting(self):
+        app = HangmanApp.__new__(HangmanApp)
+        app.player = {"id": 7}
+        app.progression_snapshot = {
+            "personalized_recommendation": {
+                "category": "pays",
+                "difficulty": "Moyen",
+            }
+        }
+        calls = []
+
+        def fake_get_progression_bundle():
+            snapshot = {
+                "personalized_recommendation": {
+                    "category": "pays",
+                    "difficulty": "Moyen",
+                }
+            }
+            app.progression_snapshot = snapshot
+            return None, snapshot
+
+        app._get_progression_bundle = fake_get_progression_bundle
+        app._sync_selection_from_goal = lambda goal: calls.append(
+            ("sync", goal["category"], goal["difficulty"])
+        )
+        app.start_game = lambda: calls.append(("start",))
+
+        app.start_personalized_recommendation()
+
+        self.assertEqual(
+            calls,
+            [
+                ("sync", "pays", "Moyen"),
+                ("start",),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

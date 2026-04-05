@@ -274,21 +274,14 @@ class MainMenuScreen:
                 justify="left",
             ).pack(anchor="w", fill="x", pady=(8, 0))
 
-        featured_challenge = progression.get("featured_challenge")
-        if featured_challenge is not None:
-            ui.label(
+        personalized_recommendation = progression.get("personalized_recommendation")
+        if personalized_recommendation is not None:
+            ui.section_title(parent, "Manche recommandee")
+            ui.render_personalized_recommendation_card(
                 parent,
-                text=(
-                    "Defi du moment : "
-                    f"{featured_challenge['title']} sur "
-                    f"{format_category_name(featured_challenge['category'])} en {featured_challenge['difficulty']}."
-                    if featured_challenge.get("category") and featured_challenge.get("difficulty")
-                    else f"Defi du moment : {featured_challenge['title']}."
-                ),
-                fg=ACCENT_COLOR,
-                wraplength=330,
-                justify="left",
-            ).pack(anchor="w", fill="x", pady=(10, 0))
+                personalized_recommendation,
+                compact=True,
+            )
 
         ui.section_title(parent, "Defis actifs")
         ui.render_challenge_cards(parent, progression.get("challenges", ()), limit=2, compact=True)
@@ -331,6 +324,20 @@ class MainMenuScreen:
                 text="Reprendre dernier reglage",
                 command=app.start_last_selection,
                 width=24,
+            ).pack(side="left", padx=(0, 8))
+        personalized_recommendation = (
+            progression.get("personalized_recommendation") if progression is not None else None
+        )
+        if (
+            personalized_recommendation is not None
+            and personalized_recommendation.get("category")
+            and personalized_recommendation.get("difficulty")
+        ):
+            tk.Button(
+                buttons,
+                text="Jouer la reco",
+                command=app.start_personalized_recommendation,
+                width=16,
             ).pack(side="left", padx=(0, 8))
         if progression is not None and progression.get("featured_challenge") is not None:
             tk.Button(

@@ -173,16 +173,30 @@ class RoundSummaryScreen:
                     justify="left",
                 ).pack(anchor="w", fill="x", pady=(4, 0))
 
+        personalized_recommendation = (
+            progression_snapshot.get("personalized_recommendation")
+            if progression_snapshot is not None and guided_progress is None
+            else None
+        )
+        if personalized_recommendation is not None:
+            recommendation_area = ui.card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+            recommendation_area.pack(fill="x", pady=(14, 0))
+            ui.section_title(recommendation_area, "Manche recommandee")
+            ui.render_personalized_recommendation_card(
+                recommendation_area,
+                personalized_recommendation,
+            )
+
         if progression_snapshot is not None:
             goal_area = ui.card(container, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
             goal_area.pack(fill="x", pady=(14, 0))
-            ui.section_title(goal_area, "Prochaine action recommandee")
+            ui.section_title(goal_area, "Meta-progression")
             primary_goal = progression_snapshot["primary_goal"]
             if primary_goal is not None:
                 ui.label(
                     goal_area,
                     text=(
-                        f"{primary_goal['title']} : {primary_goal['progress_text']}. "
+                        f"Objectif de fond : {primary_goal['title']} : {primary_goal['progress_text']}. "
                         f"{primary_goal['detail']}"
                     ),
                     wraplength=760,
@@ -238,6 +252,17 @@ class RoundSummaryScreen:
                 width=20,
             ).pack(side="left", padx=(0, 8))
         else:
+            if (
+                personalized_recommendation is not None
+                and personalized_recommendation.get("category")
+                and personalized_recommendation.get("difficulty")
+            ):
+                tk.Button(
+                    buttons,
+                    text="Jouer la reco",
+                    command=app.start_personalized_recommendation,
+                    width=16,
+                ).pack(side="left", padx=(0, 8))
             tk.Button(
                 buttons,
                 text="Rejouer meme reglage",
@@ -245,7 +270,7 @@ class RoundSummaryScreen:
                 width=20,
             ).pack(side="left", padx=(0, 8))
             if progression_snapshot is not None and progression_snapshot.get("primary_goal") is not None:
-                app.primary_goal_snapshot = progression_snapshot
+                app.progression_snapshot = progression_snapshot
                 tk.Button(
                     buttons,
                     text="Session objectif",
@@ -415,7 +440,7 @@ class RoundSummaryScreen:
 
         buttons = ui.frame(container, bg=APP_BG)
         buttons.pack(fill="x", pady=(16, 0))
-        if app.primary_goal_snapshot is not None and app.primary_goal_snapshot.get("primary_goal") is not None:
+        if app.progression_snapshot is not None and app.progression_snapshot.get("primary_goal") is not None:
             tk.Button(
                 buttons,
                 text="Session objectif",

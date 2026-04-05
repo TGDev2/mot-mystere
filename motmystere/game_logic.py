@@ -84,7 +84,7 @@ class HangmanApp:
 
         self.player_name_entry = None
         self.difficulty_menu = None
-        self.primary_goal_snapshot = None
+        self.progression_snapshot = None
 
         self.ui = PresentationShell()
         self.main_menu_screen = MainMenuScreen()
@@ -323,7 +323,7 @@ class HangmanApp:
         self._set_active_player(bundle["player"])
         dashboard = bundle["dashboard"]
         snapshot = bundle["snapshot"]
-        self.primary_goal_snapshot = snapshot
+        self.progression_snapshot = snapshot
 
         if sync_recent_selection:
             self._sync_selection_from_recent_game(self._get_latest_game(dashboard))
@@ -457,20 +457,29 @@ class HangmanApp:
         self.show_main_menu(banner_message="Session guidee arretee avant la fin de la manche.")
 
     def start_primary_goal(self):
-        if self.player is not None and self.primary_goal_snapshot is None:
-            _, self.primary_goal_snapshot = self._get_progression_bundle()
+        if self.player is not None and self.progression_snapshot is None:
+            _, self.progression_snapshot = self._get_progression_bundle()
 
-        if self.primary_goal_snapshot and self.primary_goal_snapshot.get("primary_goal"):
-            self._sync_selection_from_goal(self.primary_goal_snapshot["primary_goal"])
+        if self.progression_snapshot and self.progression_snapshot.get("primary_goal"):
+            self._sync_selection_from_goal(self.progression_snapshot["primary_goal"])
 
         self.start_game()
 
     def start_featured_challenge(self):
-        if self.player is not None and self.primary_goal_snapshot is None:
-            _, self.primary_goal_snapshot = self._get_progression_bundle()
+        if self.player is not None and self.progression_snapshot is None:
+            _, self.progression_snapshot = self._get_progression_bundle()
 
-        if self.primary_goal_snapshot and self.primary_goal_snapshot.get("featured_challenge"):
-            self._sync_selection_from_goal(self.primary_goal_snapshot["featured_challenge"])
+        if self.progression_snapshot and self.progression_snapshot.get("featured_challenge"):
+            self._sync_selection_from_goal(self.progression_snapshot["featured_challenge"])
+
+        self.start_game()
+
+    def start_personalized_recommendation(self):
+        if self.player is not None:
+            _, self.progression_snapshot = self._get_progression_bundle()
+
+        if self.progression_snapshot and self.progression_snapshot.get("personalized_recommendation"):
+            self._sync_selection_from_goal(self.progression_snapshot["personalized_recommendation"])
 
         self.start_game()
 
@@ -728,7 +737,7 @@ class HangmanApp:
         self.player = outcome["player"]
         self.progress_var.set(self._build_player_summary(self.player))
         if outcome["progression_snapshot"] is not None:
-            self.primary_goal_snapshot = outcome["progression_snapshot"]
+            self.progression_snapshot = outcome["progression_snapshot"]
 
         guided_progress = None
         guided_recommendation = None

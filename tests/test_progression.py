@@ -15,6 +15,25 @@ class ProgressionTestCase(unittest.TestCase):
             "sports": ("Facile",),
         }
 
+    def _recent_game(
+        self,
+        category,
+        difficulty,
+        *,
+        won,
+        end_reason,
+        attempts_left,
+        time_remaining,
+    ):
+        return {
+            "category": category,
+            "difficulty": difficulty,
+            "won": won,
+            "end_reason": end_reason,
+            "attempts_left": attempts_left,
+            "time_remaining": time_remaining,
+        }
+
     def test_snapshot_starts_with_mastery_grid_and_validation_goal(self):
         snapshot = build_progression_snapshot(
             {"score_total": 0},
@@ -119,6 +138,244 @@ class ProgressionTestCase(unittest.TestCase):
             mastery_updates,
             {"Animaux / Facile valide", "Pays / Facile maitrise"},
         )
+
+    def test_personalized_recommendation_falls_back_to_mastery_without_strong_recent_signal(self):
+        snapshot = build_progression_snapshot(
+            {"score_total": 120},
+            {
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 1, "wins": 1},
+                    {"category": "animaux", "difficulty": "Moyen", "games_played": 2, "wins": 0},
+                ],
+                "favorite_category": {"category": "animaux"},
+                "best_difficulty": {"difficulty": "Facile"},
+                "recent_form": {"recent_games": 2, "recent_wins": 1},
+                "recent_games": [
+                    self._recent_game(
+                        "animaux",
+                        "Moyen",
+                        won=False,
+                        end_reason="attempts",
+                        attempts_left=0,
+                        time_remaining=25,
+                    ),
+                    self._recent_game(
+                        "animaux",
+                        "Facile",
+                        won=True,
+                        end_reason="won",
+                        attempts_left=7,
+                        time_remaining=40,
+                    ),
+                ],
+            },
+            self.category_availability,
+        )
+
+        recommendation = snapshot["personalized_recommendation"]
+
+        self.assertEqual(snapshot["learning_profile"]["dominant_driver"], "mastery_gap")
+        self.assertEqual(recommendation["driver"], "mastery_gap")
+        self.assertEqual(recommendation["category"], "pays")
+        self.assertEqual(recommendation["difficulty"], "Facile")
+
+    def test_personalized_recommendation_switches_to_time_pressure(self):
+        snapshot = build_progression_snapshot(
+            {"score_total": 260},
+            {
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 2, "wins": 1},
+                    {"category": "animaux", "difficulty": "Moyen", "games_played": 1, "wins": 0},
+                    {"category": "pays", "difficulty": "Facile", "games_played": 1, "wins": 1},
+                    {"category": "pays", "difficulty": "Moyen", "games_played": 1, "wins": 1},
+                ],
+                "favorite_category": {"category": "animaux"},
+                "best_difficulty": {"difficulty": "Facile"},
+                "recent_form": {"recent_games": 2, "recent_wins": 1},
+                "recent_games": [
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        won=False,
+                        end_reason="time",
+                        attempts_left=2,
+                        time_remaining=0,
+                    ),
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        won=True,
+                        end_reason="won",
+                        attempts_left=2,
+                        time_remaining=8,
+                    ),
+                ],
+            },
+            self.category_availability,
+        )
+
+        recommendation = snapshot["personalized_recommendation"]
+
+        self.assertEqual(snapshot["learning_profile"]["dominant_driver"], "time_pressure")
+        self.assertEqual(recommendation["driver"], "time_pressure")
+        self.assertEqual(recommendation["category"], "pays")
+        self.assertEqual(recommendation["difficulty"], "Moyen")
+        self.assertIn("La carte de maitrise reste Pays en Difficile", recommendation["detail"])
+
+    def test_personalized_recommendation_switches_to_error_pressure(self):
+        snapshot = build_progression_snapshot(
+            {"score_total": 260},
+            {
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 2, "wins": 1},
+                    {"category": "animaux", "difficulty": "Moyen", "games_played": 2, "wins": 0},
+                    {"category": "pays", "difficulty": "Facile", "games_played": 1, "wins": 1},
+                    {"category": "pays", "difficulty": "Moyen", "games_played": 1, "wins": 1},
+                    {"category": "pays", "difficulty": "Difficile", "games_played": 1, "wins": 1},
+                ],
+                "favorite_category": {"category": "animaux"},
+                "best_difficulty": {"difficulty": "Moyen"},
+                "recent_form": {"recent_games": 2, "recent_wins": 1},
+                "recent_games": [
+                    self._recent_game(
+                        "animaux",
+                        "Moyen",
+                        won=False,
+                        end_reason="attempts",
+                        attempts_left=0,
+                        time_remaining=19,
+                    ),
+                    self._recent_game(
+                        "animaux",
+                        "Moyen",
+                        won=True,
+                        end_reason="won",
+                        attempts_left=1,
+                        time_remaining=18,
+                    ),
+                ],
+            },
+            self.category_availability,
+        )
+
+        recommendation = snapshot["personalized_recommendation"]
+
+        self.assertEqual(snapshot["learning_profile"]["dominant_driver"], "error_pressure")
+        self.assertEqual(recommendation["driver"], "error_pressure")
+        self.assertEqual(recommendation["category"], "animaux")
+        self.assertEqual(recommendation["difficulty"], "Moyen")
+        self.assertIn("la paire n'a pas encore de victoire", recommendation["detail"])
+
+    def test_recent_driver_pivots_when_latest_pattern_changes(self):
+        shared_dashboard = {
+            "selection_stats": [
+                {"category": "animaux", "difficulty": "Facile", "games_played": 2, "wins": 1},
+                {"category": "animaux", "difficulty": "Moyen", "games_played": 2, "wins": 0},
+                {"category": "pays", "difficulty": "Facile", "games_played": 1, "wins": 1},
+                {"category": "pays", "difficulty": "Moyen", "games_played": 1, "wins": 1},
+            ],
+            "favorite_category": {"category": "animaux"},
+            "best_difficulty": {"difficulty": "Moyen"},
+            "recent_form": {"recent_games": 2, "recent_wins": 1},
+        }
+
+        time_snapshot = build_progression_snapshot(
+            {"score_total": 260},
+            {
+                **shared_dashboard,
+                "recent_games": [
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        won=False,
+                        end_reason="time",
+                        attempts_left=2,
+                        time_remaining=0,
+                    ),
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        won=True,
+                        end_reason="won",
+                        attempts_left=2,
+                        time_remaining=8,
+                    ),
+                ],
+            },
+            self.category_availability,
+        )
+        error_snapshot = build_progression_snapshot(
+            {"score_total": 260},
+            {
+                **shared_dashboard,
+                "recent_games": [
+                    self._recent_game(
+                        "animaux",
+                        "Moyen",
+                        won=False,
+                        end_reason="attempts",
+                        attempts_left=0,
+                        time_remaining=19,
+                    ),
+                    self._recent_game(
+                        "animaux",
+                        "Moyen",
+                        won=True,
+                        end_reason="won",
+                        attempts_left=1,
+                        time_remaining=18,
+                    ),
+                ],
+            },
+            self.category_availability,
+        )
+
+        self.assertEqual(time_snapshot["learning_profile"]["dominant_driver"], "time_pressure")
+        self.assertEqual(error_snapshot["learning_profile"]["dominant_driver"], "error_pressure")
+        self.assertNotEqual(
+            time_snapshot["personalized_recommendation"]["category"],
+            error_snapshot["personalized_recommendation"]["category"],
+        )
+
+    def test_learning_profile_exposes_three_axes_with_single_dominant_status(self):
+        snapshot = build_progression_snapshot(
+            {"score_total": 260},
+            {
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 2, "wins": 1},
+                    {"category": "animaux", "difficulty": "Moyen", "games_played": 1, "wins": 0},
+                    {"category": "pays", "difficulty": "Facile", "games_played": 1, "wins": 1},
+                    {"category": "pays", "difficulty": "Moyen", "games_played": 1, "wins": 1},
+                ],
+                "favorite_category": {"category": "animaux"},
+                "best_difficulty": {"difficulty": "Facile"},
+                "recent_form": {"recent_games": 2, "recent_wins": 1},
+                "recent_games": [
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        won=False,
+                        end_reason="time",
+                        attempts_left=2,
+                        time_remaining=0,
+                    ),
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        won=True,
+                        end_reason="won",
+                        attempts_left=2,
+                        time_remaining=8,
+                    ),
+                ],
+            },
+            self.category_availability,
+        )
+
+        axes = snapshot["learning_profile"]["axes"]
+
+        self.assertEqual(len(axes), 3)
+        self.assertEqual(sum(1 for axis in axes if axis["status"] == "Dominant"), 1)
 
 
 if __name__ == "__main__":

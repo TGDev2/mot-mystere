@@ -4,7 +4,7 @@ from tkinter import messagebox
 from ...categories import format_category_name
 from ...solo_game_service import get_progression_bundle
 from ..formatters import format_end_reason, format_played_at
-from ..theme import ACCENT_BORDER, ACCENT_COLOR, APP_BG, CARD_BG, HERO_BG, MUTED_BG
+from ..theme import ACCENT_BORDER, ACCENT_COLOR, APP_BG, CARD_BG, HERO_BG, MUTED_BG, TEXT_COLOR
 
 
 class PlayerDashboardScreen:
@@ -70,6 +70,67 @@ class PlayerDashboardScreen:
                 wraplength=760,
             ).pack(fill="x", pady=2)
 
+        learning_profile = progression["learning_profile"]
+        diagnostic_card = ui.card(container, bg="#eef6ff", border="#c8d9f1", padx=18, pady=18)
+        diagnostic_card.pack(fill="x", pady=(14, 0))
+        ui.section_title(diagnostic_card, "Diagnostic recent")
+        ui.label(
+            diagnostic_card,
+            text=(
+                f"Lecture sur {learning_profile['recent_window_size']} manches recentes "
+                f"ponderees {learning_profile['weighting']}."
+            ),
+            fg=ACCENT_COLOR,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(0, 8))
+        axis_row = ui.frame(diagnostic_card, bg=diagnostic_card.cget("bg"))
+        axis_row.pack(fill="x")
+        for index, axis in enumerate(learning_profile["axes"]):
+            is_dominant = axis["status"] == "Dominant"
+            axis_card = ui.card(
+                axis_row,
+                bg="#f7f9fc" if not is_dominant else "#ffffff",
+                border=ACCENT_BORDER if is_dominant else "#d7deea",
+                padx=12,
+                pady=12,
+            )
+            axis_card.pack(
+                side="left",
+                fill="both",
+                expand=True,
+                padx=(0, 8 if index < len(learning_profile["axes"]) - 1 else 0),
+            )
+            ui.label(
+                axis_card,
+                text=axis["label"],
+                bg=axis_card.cget("bg"),
+                fg=ACCENT_COLOR if is_dominant else TEXT_COLOR,
+                font=("Arial", 10, "bold"),
+            ).pack(anchor="w")
+            ui.label(
+                axis_card,
+                text=axis["status"],
+                bg=axis_card.cget("bg"),
+                fg=ACCENT_COLOR if is_dominant else TEXT_COLOR,
+                font=("Arial", 13, "bold"),
+            ).pack(anchor="w", pady=(2, 2))
+            ui.label(
+                axis_card,
+                text=axis["detail"],
+                bg=axis_card.cget("bg"),
+                wraplength=220,
+                justify="left",
+            ).pack(anchor="w", fill="x")
+
+        personalized_recommendation = progression.get("personalized_recommendation")
+        if personalized_recommendation is not None:
+            ui.section_title(diagnostic_card, "Manche recommandee")
+            ui.render_personalized_recommendation_card(
+                diagnostic_card,
+                personalized_recommendation,
+            )
+
         insight_lines = []
         if dashboard["best_difficulty"] is not None:
             best_difficulty = dashboard["best_difficulty"]
@@ -101,7 +162,7 @@ class PlayerDashboardScreen:
             insight_card.pack(fill="x", pady=(14, 0))
             ui.label(
                 insight_card,
-                text="Points de progression",
+                text="Reperes de profil",
                 font=("Arial", 12, "bold"),
             ).pack(anchor="w", pady=(0, 6))
             for line in insight_lines:

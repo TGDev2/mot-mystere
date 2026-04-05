@@ -1,9 +1,26 @@
 from .categories import DIFFICULTY_LEVELS, format_category_name
+from .scoring import get_attempts_for_difficulty, get_time_limit_for_difficulty
 
 
 SCORE_MILESTONES = (100, 250, 500, 900, 1400, 2100, 3200, 4800, 7000)
 VALIDATED_WINS = 1
 MASTERED_WINS = 3
+RECENT_WINDOW_SIZE = 5
+RECENT_WINDOW_WEIGHTS = (5, 4, 3, 2, 1)
+RECENT_WEIGHTING_LABEL = "5-4-3-2-1"
+RECENT_DRIVER_THRESHOLD = 60
+RECENT_DRIVER_MARGIN = 10
+SECONDARY_AXIS_THRESHOLD = 25
+LOW_RESOURCE_THRESHOLD = 0.20
+LOW_RESOURCE_WIN_THRESHOLD = 0.15
+TIME_EXPIRED_POINTS = 10
+TIME_LOW_MARGIN_POINTS = 4
+TIME_LOW_MARGIN_WIN_POINTS = 3
+ERROR_EXPIRED_POINTS = 10
+ERROR_LOW_MARGIN_POINTS = 4
+ERROR_LOW_MARGIN_WIN_POINTS = 3
+
+
 def _as_int(value):
     return int(value or 0)
 
@@ -12,6 +29,10 @@ def _ratio(progress, target):
     if target <= 0:
         return 1.0
     return min(1.0, max(0.0, progress / target))
+
+
+def _safe_ratio(value, total):
+    return min(1.0, max(0.0, (float(value or 0) / float(total)))) if total else 0.0
 
 
 def _pick_score_target(score_total):
@@ -88,18 +109,14 @@ def _build_mastery_cell(category, difficulty, stats):
 
 
 def _pick_validation_focus_pair(cells):
-    pending_not_started = [
-        cell for cell in cells if cell["state"] == "not_started"
-    ]
+    pending_not_started = [cell for cell in cells if cell["state"] == "not_started"]
     if pending_not_started:
         return sorted(
             pending_not_started,
             key=lambda cell: (cell["category"], DIFFICULTY_LEVELS.index(cell["difficulty"])),
         )[0]
 
-    pending_in_progress = [
-        cell for cell in cells if cell["state"] == "in_progress"
-    ]
+    pending_in_progress = [cell for cell in cells if cell["state"] == "in_progress"]
     if pending_in_progress:
         return sorted(
             pending_in_progress,
@@ -110,9 +127,7 @@ def _pick_validation_focus_pair(cells):
             ),
         )[0]
 
-    pending_validated = [
-        cell for cell in cells if cell["state"] == "validated"
-    ]
+    pending_validated = [cell for cell in cells if cell["state"] == "validated"]
     if pending_validated:
         return sorted(
             pending_validated,
@@ -145,10 +160,7 @@ def _pick_mastery_focus_pair(cells):
 
 def build_mastery_snapshot(category_availability, selection_stats):
     selection_stats = selection_stats or ()
-    stats_map = {
-        (row["category"], row["difficulty"]): row
-        for row in selection_stats
-    }
+    stats_map = {(row["category"], row["difficulty"]): row for row in selection_stats}
 
     rows = []
     all_cells = []
@@ -321,14 +333,7 @@ def _build_pair_challenge(mastery):
     else:
         focus_pair = mastery.get("mastery_focus_pair")
         if focus_pair is None:
-            focus_pair = next(
-                (
-                    cell
-                    for cell in mastery.get("cells", ())
-                    if cell.get("available")
-                ),
-                None,
-            )
+            focus_pair = next((cell for cell in mastery.get("cells", ()) if cell.get("available")), None)
 
         if focus_pair is None:
             return {
@@ -431,6 +436,435 @@ def _build_score_challenge(player, dashboard, category_availability, mastery):
     return score_goal
 
 
+def _get_available_cell(mastery, category, difficulty):
+    for cell in mastery.get("cells", ()):
+        if not cell.get("available"):
+            continue
+        if cell.get("category") == category and cell.get("difficulty") == difficulty:
+            return cell
+    return None
+
+
+def _format_selection(category, difficulty):
+    if not category or not difficulty:
+        return "le reglage conseille"
+    return f"{format_category_name(category)} en {difficulty}"
+
+
+def _resolve_lower_difficulty(category_availability, category, difficulty):
+    available_difficulties = category_availability.get(category, ())
+    if not available_difficulties:
+        return None
+    if difficulty not in available_difficulties:
+        return available_difficulties[0]
+
+    difficulty_index = available_difficulties.index(difficulty)
+    if difficulty_index <= 0:
+        return difficulty
+    return available_difficulties[difficulty_index - 1]
+
+
+def _iter_weighted_recent_games(recent_games):
+    recent_games = recent_games or ()
+    for index, game in enumerate(recent_games[:RECENT_WINDOW_SIZE]):
+        yield index, RECENT_WINDOW_WEIGHTS[index], game
+
+
+def _build_time_pressure_signal(recent_games, category_availability):
+    entries = []
+    score = 0
+
+    for index, weight, game in _iter_weighted_recent_games(recent_games):
+        try:
+            time_limit = get_time_limit_for_difficulty(game.get("difficulty"))
+        except ValueError:
+            continue
+
+        contribution = 0
+        reason = None
+        time_ratio = _safe_ratio(
+            min(_as_int(game.get("time_remaining")), time_limit),
+            max(1, time_limit),
+        )
+        if game.get("end_reason") == "time":
+            contribution = weight * TIME_EXPIRED_POINTS
+            reason = "timeout"
+        elif bool(game.get("won")) and time_ratio <= LOW_RESOURCE_WIN_THRESHOLD:
+            contribution = weight * TIME_LOW_MARGIN_WIN_POINTS
+            reason = "tight_win"
+        elif time_ratio <= LOW_RESOURCE_THRESHOLD:
+            contribution = weight * TIME_LOW_MARGIN_POINTS
+            reason = "low_margin"
+
+        if contribution <= 0:
+            continue
+
+        entry = {
+            "index": index,
+            "weight": weight,
+            "contribution": contribution,
+            "reason": reason,
+            "category": game.get("category"),
+            "difficulty": game.get("difficulty"),
+        }
+        entries.append(entry)
+        score += contribution
+
+    available_entries = [
+        entry
+        for entry in entries
+        if entry["category"] in category_availability
+        and entry["difficulty"] in category_availability[entry["category"]]
+    ]
+
+    top_entry = None
+    if available_entries:
+        top_entry = max(available_entries, key=lambda entry: (entry["contribution"], -entry["index"]))
+
+    return {
+        "score": min(100, score),
+        "entries": entries,
+        "top_entry": top_entry,
+    }
+
+
+def _build_error_pressure_signal(recent_games, category_availability):
+    entries = []
+    score = 0
+
+    for index, weight, game in _iter_weighted_recent_games(recent_games):
+        try:
+            attempts_budget = get_attempts_for_difficulty(game.get("difficulty"))
+        except ValueError:
+            continue
+
+        contribution = 0
+        reason = None
+        attempts_ratio = _safe_ratio(
+            min(_as_int(game.get("attempts_left")), attempts_budget),
+            max(1, attempts_budget),
+        )
+        if game.get("end_reason") == "attempts":
+            contribution = weight * ERROR_EXPIRED_POINTS
+            reason = "attempts_exhausted"
+        elif bool(game.get("won")) and attempts_ratio <= LOW_RESOURCE_WIN_THRESHOLD:
+            contribution = weight * ERROR_LOW_MARGIN_WIN_POINTS
+            reason = "tight_win"
+        elif attempts_ratio <= LOW_RESOURCE_THRESHOLD:
+            contribution = weight * ERROR_LOW_MARGIN_POINTS
+            reason = "low_margin"
+
+        if contribution <= 0:
+            continue
+
+        entry = {
+            "index": index,
+            "weight": weight,
+            "contribution": contribution,
+            "reason": reason,
+            "category": game.get("category"),
+            "difficulty": game.get("difficulty"),
+        }
+        entries.append(entry)
+        score += contribution
+
+    available_entries = [
+        entry
+        for entry in entries
+        if entry["category"] in category_availability
+        and entry["difficulty"] in category_availability[entry["category"]]
+    ]
+
+    top_entry = None
+    if available_entries:
+        top_entry = max(available_entries, key=lambda entry: (entry["contribution"], -entry["index"]))
+
+    return {
+        "score": min(100, score),
+        "entries": entries,
+        "top_entry": top_entry,
+    }
+
+
+def _build_mastery_gap_signal(mastery, recent_games):
+    focus_pair = mastery.get("focus_pair")
+    pair = focus_pair or mastery.get("mastery_focus_pair")
+    if pair is None:
+        return {
+            "score": 0,
+            "pair": None,
+            "recent_retry_without_win": False,
+        }
+
+    if pair["state"] in {"not_started", "in_progress"}:
+        score = 70
+    elif pair["state"] == "validated":
+        score = 45
+    else:
+        score = 0
+
+    recent_retry_without_win = any(
+        game.get("category") == pair["category"]
+        and game.get("difficulty") == pair["difficulty"]
+        and not bool(game.get("won"))
+        for game in (recent_games or ())[:RECENT_WINDOW_SIZE]
+    )
+    if score and recent_retry_without_win:
+        score += 10
+
+    return {
+        "score": min(100, score),
+        "pair": pair,
+        "recent_retry_without_win": recent_retry_without_win,
+    }
+
+
+def _build_mastery_axis_detail(mastery_gap):
+    pair = mastery_gap.get("pair")
+    if pair is None:
+        return "Carte de maitrise complete sur les reglages actuellement disponibles."
+
+    selection_text = _format_selection(pair["category"], pair["difficulty"])
+    if pair["state"] in {"not_started", "in_progress"}:
+        if mastery_gap.get("recent_retry_without_win"):
+            return f"{selection_text} reste la prochaine validation rentable et resiste encore."
+        return f"{selection_text} reste la prochaine paire a valider."
+    return f"{selection_text} reste la prochaine paire a maitriser."
+
+
+def _build_recent_axis_detail(signal, axis_key):
+    score = signal["score"]
+    if score <= 0:
+        if axis_key == "time_pressure":
+            return "Le temps recent reste sous controle."
+        return "Les erreurs recentes restent sous controle."
+    if score < SECONDARY_AXIS_THRESHOLD:
+        if axis_key == "time_pressure":
+            return "Quelques manches recentes se terminent avec peu de marge au chrono."
+        return "Quelques manches recentes se terminent avec peu de marge sur les essais."
+    if axis_key == "time_pressure":
+        return "Le chrono recent commence a peser sur la progression."
+    return "Les erreurs recentes commencent a bloquer la progression."
+
+
+def _build_axis_status(axis_key, dominant_driver, score):
+    if axis_key == dominant_driver:
+        return "Dominant"
+    if score >= SECONDARY_AXIS_THRESHOLD:
+        return "Secondaire"
+    return "Sous controle"
+
+
+def _build_mastery_recommendation(mastery_gap):
+    pair = mastery_gap.get("pair")
+    if pair is None:
+        return {
+            "driver": "mastery_gap",
+            "driver_label": "Maitrise",
+            "category": None,
+            "difficulty": None,
+            "title": "Continuer a varier les manches",
+            "detail": "La carte de maitrise est complete sur les reglages disponibles.",
+            "cta_text": "Jouer la reco",
+        }
+
+    category = pair["category"]
+    difficulty = pair["difficulty"]
+    selection_text = _format_selection(category, difficulty)
+
+    if pair["state"] in {"not_started", "in_progress"}:
+        detail = f"{selection_text} reste la prochaine paire a valider pour debloquer un vrai palier."
+        if mastery_gap.get("recent_retry_without_win"):
+            detail += " Cette paire a encore resiste recemment, ce qui renforce la priorite."
+        title = f"Valider {format_category_name(category)} en {difficulty}"
+    else:
+        detail = f"{selection_text} reste la paire la plus rentable a pousser jusqu'a la maitrise."
+        title = f"Maitriser {format_category_name(category)} en {difficulty}"
+
+    return {
+        "driver": "mastery_gap",
+        "driver_label": "Maitrise",
+        "category": category,
+        "difficulty": difficulty,
+        "title": title,
+        "detail": detail,
+        "cta_text": "Jouer la reco",
+    }
+
+
+def _append_mastery_override(detail, driver_label, recommendation, mastery_recommendation):
+    same_selection = (
+        recommendation.get("category") == mastery_recommendation.get("category")
+        and recommendation.get("difficulty") == mastery_recommendation.get("difficulty")
+    )
+    if same_selection or not mastery_recommendation.get("category") or not mastery_recommendation.get("difficulty"):
+        return detail
+
+    mastery_text = _format_selection(
+        mastery_recommendation["category"],
+        mastery_recommendation["difficulty"],
+    )
+    return (
+        f"{detail} La carte de maitrise reste {mastery_text}, "
+        f"mais {driver_label.lower()} est le levier dominant pour l'instant."
+    )
+
+
+def _build_time_recommendation(signal, category_availability, mastery_recommendation):
+    top_entry = signal.get("top_entry")
+    if top_entry is None:
+        return mastery_recommendation
+
+    category = top_entry["category"]
+    source_difficulty = top_entry["difficulty"]
+    difficulty = _resolve_lower_difficulty(category_availability, category, source_difficulty)
+    if difficulty is None:
+        return mastery_recommendation
+
+    source_text = _format_selection(category, source_difficulty)
+    target_text = _format_selection(category, difficulty)
+    if difficulty != source_difficulty:
+        detail = f"Le temps recent bloque surtout sur {source_text}. Redescendez sur {target_text} pour retrouver de la marge."
+    else:
+        detail = f"Le temps recent bloque surtout sur {source_text}. Rejouez ce reglage pour securiser le chrono."
+
+    recommendation = {
+        "driver": "time_pressure",
+        "driver_label": "Temps",
+        "category": category,
+        "difficulty": difficulty,
+        "title": f"Reprendre {format_category_name(category)} en {difficulty}",
+        "detail": detail,
+        "cta_text": "Jouer la reco",
+    }
+    recommendation["detail"] = _append_mastery_override(
+        recommendation["detail"],
+        recommendation["driver_label"],
+        recommendation,
+        mastery_recommendation,
+    )
+    return recommendation
+
+
+def _build_error_recommendation(signal, mastery, category_availability, mastery_recommendation):
+    top_entry = signal.get("top_entry")
+    if top_entry is None:
+        return mastery_recommendation
+
+    category = top_entry["category"]
+    source_difficulty = top_entry["difficulty"]
+    source_cell = _get_available_cell(mastery, category, source_difficulty)
+    keep_same_difficulty = source_cell is not None and _as_int(source_cell.get("wins")) == 0
+    difficulty = source_difficulty if keep_same_difficulty else _resolve_lower_difficulty(
+        category_availability,
+        category,
+        source_difficulty,
+    )
+    if difficulty is None:
+        return mastery_recommendation
+
+    source_text = _format_selection(category, source_difficulty)
+    target_text = _format_selection(category, difficulty)
+    if keep_same_difficulty:
+        detail = (
+            f"Les erreurs recentes dominent sur {source_text}. Gardez ce niveau : "
+            "la paire n'a pas encore de victoire."
+        )
+    elif difficulty != source_difficulty:
+        detail = f"Les erreurs recentes dominent sur {source_text}. Redescendez sur {target_text} pour retrouver de la precision."
+    else:
+        detail = f"Les erreurs recentes dominent sur {source_text}. Rejouez ce reglage pour nettoyer les erreurs."
+
+    recommendation = {
+        "driver": "error_pressure",
+        "driver_label": "Erreurs",
+        "category": category,
+        "difficulty": difficulty,
+        "title": f"Reprendre {format_category_name(category)} en {difficulty}",
+        "detail": detail,
+        "cta_text": "Jouer la reco",
+    }
+    recommendation["detail"] = _append_mastery_override(
+        recommendation["detail"],
+        recommendation["driver_label"],
+        recommendation,
+        mastery_recommendation,
+    )
+    return recommendation
+
+
+def _choose_dominant_driver(time_signal, error_signal):
+    if (
+        time_signal["score"] >= RECENT_DRIVER_THRESHOLD
+        and time_signal["score"] >= error_signal["score"] + RECENT_DRIVER_MARGIN
+        and time_signal.get("top_entry") is not None
+    ):
+        return "time_pressure"
+    if (
+        error_signal["score"] >= RECENT_DRIVER_THRESHOLD
+        and error_signal["score"] >= time_signal["score"] + RECENT_DRIVER_MARGIN
+        and error_signal.get("top_entry") is not None
+    ):
+        return "error_pressure"
+    return "mastery_gap"
+
+
+def _build_learning_profile(mastery, recent_games, category_availability):
+    time_signal = _build_time_pressure_signal(recent_games, category_availability)
+    error_signal = _build_error_pressure_signal(recent_games, category_availability)
+    mastery_gap = _build_mastery_gap_signal(mastery, recent_games)
+    dominant_driver = _choose_dominant_driver(time_signal, error_signal)
+    mastery_recommendation = _build_mastery_recommendation(mastery_gap)
+
+    if dominant_driver == "time_pressure":
+        recommendation = _build_time_recommendation(
+            time_signal,
+            category_availability,
+            mastery_recommendation,
+        )
+    elif dominant_driver == "error_pressure":
+        recommendation = _build_error_recommendation(
+            error_signal,
+            mastery,
+            category_availability,
+            mastery_recommendation,
+        )
+    else:
+        recommendation = mastery_recommendation
+
+    axes = (
+        {
+            "key": "time_pressure",
+            "label": "Temps",
+            "score": time_signal["score"],
+            "status": _build_axis_status("time_pressure", dominant_driver, time_signal["score"]),
+            "detail": _build_recent_axis_detail(time_signal, "time_pressure"),
+        },
+        {
+            "key": "error_pressure",
+            "label": "Erreurs",
+            "score": error_signal["score"],
+            "status": _build_axis_status("error_pressure", dominant_driver, error_signal["score"]),
+            "detail": _build_recent_axis_detail(error_signal, "error_pressure"),
+        },
+        {
+            "key": "mastery_gap",
+            "label": "Maitrise",
+            "score": mastery_gap["score"],
+            "status": _build_axis_status("mastery_gap", dominant_driver, mastery_gap["score"]),
+            "detail": _build_mastery_axis_detail(mastery_gap),
+        },
+    )
+
+    learning_profile = {
+        "dominant_driver": dominant_driver,
+        "axes": axes,
+        "recent_window_size": RECENT_WINDOW_SIZE,
+        "weighting": RECENT_WEIGHTING_LABEL,
+    }
+    return learning_profile, recommendation
+
+
 def build_progression_snapshot(player, dashboard, category_availability):
     player = player or {}
     dashboard = dashboard or {}
@@ -454,6 +888,11 @@ def build_progression_snapshot(player, dashboard, category_availability):
         (challenge for challenge in challenges if not challenge["completed"]),
         challenges[0] if challenges else None,
     )
+    learning_profile, personalized_recommendation = _build_learning_profile(
+        mastery,
+        dashboard.get("recent_games", ()),
+        category_availability,
+    )
 
     return {
         "goals": goals,
@@ -461,16 +900,15 @@ def build_progression_snapshot(player, dashboard, category_availability):
         "featured_challenge": featured_challenge,
         "primary_goal": primary_goal,
         "mastery": mastery,
+        "learning_profile": learning_profile,
+        "personalized_recommendation": personalized_recommendation,
     }
 
 
 def get_newly_completed_goals(before_snapshot, after_snapshot):
     before_snapshot = before_snapshot or {}
     after_snapshot = after_snapshot or {}
-    before_map = {
-        goal["key"]: bool(goal.get("completed"))
-        for goal in before_snapshot.get("goals", ())
-    }
+    before_map = {goal["key"]: bool(goal.get("completed")) for goal in before_snapshot.get("goals", ())}
 
     return [
         goal
@@ -503,9 +941,7 @@ def get_newly_reached_mastery_states(before_snapshot, after_snapshot):
                     "category": cell["category"],
                     "difficulty": cell["difficulty"],
                     "state": "validated",
-                    "title": (
-                        f"{format_category_name(cell['category'])} / {cell['difficulty']} valide"
-                    ),
+                    "title": f"{format_category_name(cell['category'])} / {cell['difficulty']} valide",
                 }
             )
         if before_wins < MASTERED_WINS <= after_wins:
@@ -514,9 +950,7 @@ def get_newly_reached_mastery_states(before_snapshot, after_snapshot):
                     "category": cell["category"],
                     "difficulty": cell["difficulty"],
                     "state": "mastered",
-                    "title": (
-                        f"{format_category_name(cell['category'])} / {cell['difficulty']} maitrise"
-                    ),
+                    "title": f"{format_category_name(cell['category'])} / {cell['difficulty']} maitrise",
                 }
             )
 
