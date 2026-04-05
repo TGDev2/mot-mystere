@@ -1,7 +1,9 @@
 from datetime import datetime
+from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
+from .backup_service import BackupService, BackupServiceError
 from .catalog_service import CatalogService, CatalogServiceError
 from .categories import (
     MIN_WORD_POOL_SIZE,
@@ -43,6 +45,7 @@ from .solo_game_service import (
 
 class HangmanApp:
     def __init__(self):
+        self.backup_service = BackupService()
         self.catalog_service = CatalogService()
         self.catalog_window = None
         self.catalog = None
@@ -299,6 +302,117 @@ class HangmanApp:
             catalog,
             banner_message=status_message,
             reopen_catalog=True,
+        )
+
+    def export_local_data(self):
+        suggested_path = self.backup_service.build_backup_archive_path()
+        selected_path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Sauvegarder mes donnees",
+            initialdir=str(suggested_path.parent),
+            initialfile=suggested_path.name,
+            defaultextension=".zip",
+            filetypes=[("Archives ZIP", "*.zip")],
+        )
+        if not selected_path:
+            return
+
+        try:
+            summary = self.backup_service.export_archive(selected_path)
+        except BackupServiceError as exc:
+            messagebox.showerror("Sauvegarde", str(exc))
+            return
+
+        parts = [f"Sauvegarde exportee : {Path(summary['archive_path']).name}."]
+        if summary["includes"].get("packs"):
+            parts.append("Les packs locaux sont inclus.")
+        if summary["includes"].get("catalog_state"):
+            parts.append("L'etat du catalogue est inclus.")
+        self.show_main_menu(banner_message=" ".join(parts))
+
+    def import_local_data(self):
+        selected_path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Restaurer une sauvegarde",
+            filetypes=[("Archives ZIP", "*.zip"), ("Tous les fichiers", "*.*")],
+        )
+        if not selected_path:
+            return
+
+        rescue_backup_path = None
+        if self.backup_service.has_managed_data():
+            rescue_backup_path = self.backup_service.build_backup_archive_path(
+                prefix="motmystere_pre_restore"
+            )
+            confirmed = messagebox.askyesno(
+                "Restaurer une sauvegarde",
+                (
+                    "Cette restauration remplacera completement la base locale, l'etat du catalogue "
+                    "et les packs locaux actuels. "
+                    f"Une sauvegarde de secours sera creee avant remplacement dans : {rescue_backup_path}"
+                ),
+            )
+            if not confirmed:
+                return
+
+        try:
+            summary = self.backup_service.import_archive(
+                selected_path,
+                backup_path=rescue_backup_path,
+            )
+        except BackupServiceError as exc:
+            messagebox.showerror("Restauration", str(exc))
+            return
+
+        self._apply_restored_environment(summary)
+
+    def _clear_active_player_state(self):
+        self.player = None
+        self.player_name_var.set("")
+        self.progress_var.set("")
+
+    def _apply_restored_environment(self, summary):
+        self.cancel_timer()
+        self.session = None
+        self.guided_session = None
+        self.progression_snapshot = None
+        if self.catalog_window is not None and self.catalog_window.winfo_exists():
+            self.catalog_window.destroy()
+        self.catalog_window = None
+
+        previous_category = self.category_var.get()
+        previous_difficulty = self.difficulty_var.get()
+        self._set_catalog(self.catalog_service.load_catalog())
+        selection_message = self._sync_selection_after_catalog_reload(
+            previous_category,
+            previous_difficulty,
+        )
+
+        restored_player_name = None
+        recent_players = self._load_recent_players()
+        if recent_players:
+            bundle = get_progression_bundle(
+                {"id": recent_players[0]["id"]},
+                self.category_availability,
+            )
+            if bundle is not None:
+                self._apply_progression_bundle(bundle, sync_recent_selection=True)
+                restored_player_name = bundle["player"]["name"]
+            else:
+                self._clear_active_player_state()
+        else:
+            self._clear_active_player_state()
+
+        messages = ["Sauvegarde restauree."]
+        if summary.get("backup_path"):
+            messages.append(
+                f"Sauvegarde de secours creee : {Path(summary['backup_path']).name}."
+            )
+        if restored_player_name:
+            messages.append(f"Profil recharge : {restored_player_name}.")
+        messages.append(selection_message)
+        self.show_main_menu(
+            banner_message=self._merge_banner_messages(*messages),
         )
 
     def _get_progression_bundle(self):

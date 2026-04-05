@@ -16,6 +16,7 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 - Rotation persistante des mots par joueur, categorie et niveau pour eviter les doublons avant epuisement du pool.
 - Timer et nombre d'essais differencies selon la difficulte.
 - Score persistant aligne sur la difficulte, la complexite du mot, le temps et les essais conserves.
+- Export/restauration de l'environnement local complet avec archive ZIP versionnee et sauvegarde de secours avant remplacement.
 - Profil joueur avec historique recent, niveau le plus rentable, categorie la plus jouee et categorie a travailler.
 - Carte de maitrise categorie x difficulte avec paires a valider puis a maitriser.
 - Objectifs explicites avec prochain palier recommande sur l'accueil, en manche et en fin de partie.
@@ -77,6 +78,11 @@ Variables d'environnement utiles :
 
 - `MOTMYSTERE_DB_PATH` pour forcer le chemin de la base
 - `MOTMYSTERE_DATA_DIR` pour forcer le dossier de donnees
+
+Depuis l'accueil, deux actions permettent maintenant de proteger ou transferer l'environnement local complet :
+
+- `Sauvegarder mes donnees` exporte une archive `.zip` contenant la base SQLite, l'etat du catalogue et les packs locaux.
+- `Restaurer une sauvegarde` valide l'archive, cree une sauvegarde de secours dans `<data_dir>/backups`, puis remplace l'environnement gere sans fusion partielle.
 
 ## Packs de categories
 

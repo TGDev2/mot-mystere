@@ -45,3 +45,8 @@ def get_catalog_state_path():
 
 def get_word_packs_directory():
     return get_data_directory() / "packs"
+
+
+def get_backup_directory(data_dir=None):
+    root = Path(data_dir).expanduser() if data_dir is not None else get_data_directory()
+    return root / "backups"

@@ -137,6 +137,44 @@ class MainMenuScreen:
         if issue_lines:
             ui.render_bullets(card, issue_lines, fg=fg, wraplength=320)
 
+    def _render_backup_card(self, app, parent):
+        ui = app.ui
+        card = ui.card(parent, bg="#f7f9fc", border="#d7deea", padx=12, pady=12)
+        card.pack(fill="x", pady=(14, 0))
+        ui.label(
+            card,
+            text="Sauvegarde locale",
+            bg="#f7f9fc",
+            fg=ACCENT_COLOR,
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w")
+        ui.label(
+            card,
+            text=(
+                "Exportez ou restaurez l'environnement local complet : base joueur, "
+                "historique, rotation, classement et packs locaux."
+            ),
+            bg="#f7f9fc",
+            fg=TEXT_COLOR,
+            wraplength=340,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(6, 0))
+
+        actions = ui.frame(card, bg="#f7f9fc")
+        actions.pack(anchor="w", pady=(10, 0))
+        tk.Button(
+            actions,
+            text="Sauvegarder mes donnees",
+            command=app.export_local_data,
+            width=24,
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            actions,
+            text="Restaurer une sauvegarde",
+            command=app.import_local_data,
+            width=24,
+        ).pack(side="left")
+
     def _render_recent_players_section(self, app, parent, recent_players):
         ui = app.ui
         ui.section_title(parent, "Profils recents")
@@ -248,6 +286,7 @@ class MainMenuScreen:
             justify="left",
         ).pack(anchor="w", fill="x", pady=(6, 0))
         self._render_catalog_card(app, parent)
+        self._render_backup_card(app, parent)
 
     def _render_resume_panel(self, app, parent, dashboard, progression):
         ui = app.ui
