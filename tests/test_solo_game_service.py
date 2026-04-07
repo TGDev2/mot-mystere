@@ -6,6 +6,7 @@ import uuid
 from motmystere.database import setup_database
 from motmystere.progression import build_progression_snapshot
 from motmystere.solo_game_service import (
+    build_catalog_exploration_snapshot,
     build_guided_objective,
     build_guided_recommendation,
     create_session_for_player,
@@ -185,6 +186,131 @@ class SoloGameServiceTestCase(unittest.TestCase):
         self.assertEqual(recommendation["category"], "animaux")
         self.assertEqual(recommendation["difficulty"], "Facile")
         self.assertIn("Encore 1 victoire(s) recentes", recommendation["detail"])
+
+    def test_catalog_exploration_snapshot_starts_with_a_fresh_pool(self):
+        snapshot = build_catalog_exploration_snapshot(
+            self.player["id"],
+            self.categories,
+            self.category_availability,
+            selected_category="animaux",
+            selected_difficulty="Facile",
+            db_path=self.db_path,
+        )
+
+        selected = snapshot["selected_state"]
+        self.assertEqual(selected["state_label"], "Pool largement neuf")
+        self.assertEqual(selected["progress_text"], "5/5 mot(s) frais")
+        self.assertEqual(selected["detail"], "5 mot(s) encore frais dans cette rotation.")
+
+    def test_catalog_exploration_snapshot_tracks_consumption_and_cycle_restart(self):
+        for _ in range(4):
+            create_session_for_player(
+                self.player["id"],
+                self.categories,
+                "animaux",
+                "Facile",
+                rng=FixedChoice(),
+                db_path=self.db_path,
+            )
+
+        imminent_snapshot = build_catalog_exploration_snapshot(
+            self.player["id"],
+            self.categories,
+            self.category_availability,
+            selected_category="animaux",
+            selected_difficulty="Facile",
+            db_path=self.db_path,
+        )["selected_state"]
+        self.assertEqual(imminent_snapshot["state_label"], "Cycle imminent")
+        self.assertEqual(imminent_snapshot["progress_text"], "1/5 mot(s) frais")
+
+        create_session_for_player(
+            self.player["id"],
+            self.categories,
+            "animaux",
+            "Facile",
+            rng=FixedChoice(),
+            db_path=self.db_path,
+        )
+
+        restarted_snapshot = build_catalog_exploration_snapshot(
+            self.player["id"],
+            self.categories,
+            self.category_availability,
+            selected_category="animaux",
+            selected_difficulty="Facile",
+            db_path=self.db_path,
+        )["selected_state"]
+        self.assertEqual(restarted_snapshot["state_label"], "Cycle imminent")
+        self.assertEqual(restarted_snapshot["progress_text"], "0/5 mot(s) frais")
+        self.assertEqual(
+            restarted_snapshot["detail"],
+            "Rotation terminee, la prochaine manche relancera 4 mot(s) frais.",
+        )
+
+    def test_catalog_exploration_snapshot_recalibrates_when_catalog_changes(self):
+        create_session_for_player(
+            self.player["id"],
+            self.categories,
+            "animaux",
+            "Facile",
+            rng=FixedChoice(),
+            db_path=self.db_path,
+        )
+        updated_categories = {"animaux": ["CHAT", "LION", "OURS", "LOUP", "VACHE", "PANDA"]}
+
+        recalibrated = build_catalog_exploration_snapshot(
+            self.player["id"],
+            updated_categories,
+            self.category_availability,
+            selected_category="animaux",
+            selected_difficulty="Facile",
+            db_path=self.db_path,
+        )["selected_state"]
+
+        self.assertTrue(recalibrated["catalog_recalibrated"])
+        self.assertEqual(recalibrated["state_label"], "Pool largement neuf")
+        self.assertEqual(recalibrated["progress_text"], "5/5 mot(s) frais")
+        self.assertEqual(recalibrated["note"], "Pool recalibre sur le catalogue actuel.")
+
+    def test_rotation_progression_advances_after_a_lost_round(self):
+        before_state = build_catalog_exploration_snapshot(
+            self.player["id"],
+            self.categories,
+            self.category_availability,
+            selected_category="animaux",
+            selected_difficulty="Facile",
+            db_path=self.db_path,
+        )["selected_state"]
+        session = create_session_for_player(
+            self.player["id"],
+            self.categories,
+            "animaux",
+            "Facile",
+            rng=FixedChoice(),
+            db_path=self.db_path,
+        )
+
+        resolve_round(
+            self.player,
+            session,
+            "attempts",
+            self.category_availability,
+            db_path=self.db_path,
+        )
+
+        after_state = build_catalog_exploration_snapshot(
+            self.player["id"],
+            self.categories,
+            self.category_availability,
+            selected_category="animaux",
+            selected_difficulty="Facile",
+            db_path=self.db_path,
+        )["selected_state"]
+
+        self.assertEqual(before_state["progress_text"], "5/5 mot(s) frais")
+        self.assertEqual(after_state["progress_text"], "4/5 mot(s) frais")
+        self.assertEqual(after_state["detail"], "4 mot(s) encore frais dans cette rotation.")
 
 
 if __name__ == "__main__":

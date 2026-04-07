@@ -66,12 +66,15 @@ def setup_database(db_path=DEFAULT_DB_PATH):
                 difficulty TEXT NOT NULL,
                 remaining_words TEXT NOT NULL DEFAULT '[]',
                 last_word TEXT,
+                window_size INTEGER NOT NULL DEFAULT 0,
+                pool_signature TEXT,
                 PRIMARY KEY (player_id, category, difficulty),
                 FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
             );
             """
         )
         _ensure_game_history_columns(cursor)
+        _ensure_word_rotation_columns(cursor)
         _migrate_legacy_stats(cursor)
         conn.commit()
 
@@ -94,6 +97,23 @@ def _ensure_game_history_columns(cursor):
     for column_name, definition in required_columns.items():
         if column_name not in existing_columns:
             cursor.execute(f"ALTER TABLE game_history ADD COLUMN {column_name} {definition}")
+
+
+def _ensure_word_rotation_columns(cursor):
+    existing_columns = {
+        row["name"] for row in cursor.execute("PRAGMA table_info(word_rotation)").fetchall()
+    }
+    if not existing_columns:
+        return
+
+    required_columns = {
+        "window_size": "INTEGER NOT NULL DEFAULT 0",
+        "pool_signature": "TEXT",
+    }
+
+    for column_name, definition in required_columns.items():
+        if column_name not in existing_columns:
+            cursor.execute(f"ALTER TABLE word_rotation ADD COLUMN {column_name} {definition}")
 
 
 def _migrate_legacy_stats(cursor):
@@ -410,7 +430,7 @@ def get_word_rotation_state(player_id, category, difficulty, db_path=DEFAULT_DB_
     with closing(_connect(db_path)) as conn:
         row = conn.execute(
             """
-            SELECT remaining_words, last_word
+            SELECT remaining_words, last_word, window_size, pool_signature
             FROM word_rotation
             WHERE player_id = ? AND category = ? AND difficulty = ?
             """,
@@ -418,7 +438,12 @@ def get_word_rotation_state(player_id, category, difficulty, db_path=DEFAULT_DB_
         ).fetchone()
 
     if row is None:
-        return {"remaining_words": [], "last_word": None}
+        return {
+            "remaining_words": [],
+            "last_word": None,
+            "window_size": 0,
+            "pool_signature": None,
+        }
 
     try:
         remaining_words = json.loads(row["remaining_words"] or "[]")
@@ -428,6 +453,8 @@ def get_word_rotation_state(player_id, category, difficulty, db_path=DEFAULT_DB_
     return {
         "remaining_words": [str(word).strip().upper() for word in remaining_words if str(word).strip()],
         "last_word": str(row["last_word"]).strip().upper() if row["last_word"] else None,
+        "window_size": max(0, int(row["window_size"] or 0)),
+        "pool_signature": str(row["pool_signature"]).strip() if row["pool_signature"] else None,
     }
 
 
@@ -438,6 +465,8 @@ def save_word_rotation_state(
     remaining_words,
     *,
     last_word=None,
+    window_size=0,
+    pool_signature=None,
     db_path=DEFAULT_DB_PATH,
 ):
     normalized_words = [
@@ -446,18 +475,22 @@ def save_word_rotation_state(
         if str(word).strip()
     ]
     normalized_last_word = str(last_word).strip().upper() if last_word else None
+    normalized_window_size = max(0, int(window_size or 0))
+    normalized_pool_signature = str(pool_signature).strip() if pool_signature else None
 
     with closing(_connect(db_path)) as conn:
         conn.execute(
             """
             INSERT INTO word_rotation (
-                player_id, category, difficulty, remaining_words, last_word
+                player_id, category, difficulty, remaining_words, last_word, window_size, pool_signature
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(player_id, category, difficulty)
             DO UPDATE SET
                 remaining_words = excluded.remaining_words,
-                last_word = excluded.last_word
+                last_word = excluded.last_word,
+                window_size = excluded.window_size,
+                pool_signature = excluded.pool_signature
             """,
             (
                 player_id,
@@ -465,6 +498,8 @@ def save_word_rotation_state(
                 str(difficulty),
                 json.dumps(normalized_words),
                 normalized_last_word,
+                normalized_window_size,
+                normalized_pool_signature,
             ),
         )
         conn.commit()

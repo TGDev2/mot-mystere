@@ -176,6 +176,81 @@ class PresentationShell:
             ).pack(anchor="w", pady=(10, 0))
         return card
 
+    def render_catalog_exploration_card(
+        self,
+        parent,
+        exploration_state,
+        *,
+        title="Etat d'exploration",
+        empty_message="",
+        tracked=True,
+        compact=False,
+    ):
+        bg, border, accent = self._get_exploration_style(exploration_state)
+        wraplength = 320 if compact else 420
+        card = self.card(parent, bg=bg, border=border, padx=12, pady=12)
+        card.pack(fill="x", pady=(14, 0) if not compact else (6, 0))
+        self.label(
+            card,
+            text=title,
+            bg=bg,
+            fg=accent,
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w")
+
+        if exploration_state is None:
+            self.label(
+                card,
+                text=empty_message,
+                bg=bg,
+                fg=TEXT_COLOR,
+                wraplength=wraplength,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(6, 0))
+            return card
+
+        self.label(
+            card,
+            text=exploration_state["badge_text"],
+            bg=bg,
+            fg=accent,
+            font=("Arial", 9, "bold"),
+        ).pack(anchor="w", pady=(6, 0))
+        self.label(
+            card,
+            text=exploration_state["label"],
+            bg=bg,
+            font=("Arial", 11, "bold"),
+            wraplength=wraplength,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(2, 2))
+        self.label(
+            card,
+            text=exploration_state["progress_text"],
+            bg=bg,
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w")
+        self.render_progress_bar(card, exploration_state["ratio"], fill=accent)
+        detail_text = exploration_state["detail"] if tracked else empty_message
+        self.label(
+            card,
+            text=detail_text,
+            bg=bg,
+            fg=SUBTLE_TEXT,
+            wraplength=wraplength,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(6, 0))
+        if exploration_state.get("note"):
+            self.label(
+                card,
+                text=exploration_state["note"],
+                bg=bg,
+                fg=accent,
+                wraplength=wraplength,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(6, 0))
+        return card
+
     def render_goal_cards(self, parent, goals, *, limit=3, compact=False):
         items = [dict(goal, kind="goal") for goal in goals]
         self.render_progress_cards(parent, items, limit=limit, compact=compact)
@@ -303,6 +378,91 @@ class PresentationShell:
         for column_index in range(len(headers)):
             table.grid_columnconfigure(column_index, weight=1)
 
+    def render_catalog_exploration_grid(self, parent, exploration_grid, *, compact=False):
+        if exploration_grid is None:
+            return
+
+        legend = self.card(
+            parent,
+            bg="#f7f9fc" if compact else CARD_BG,
+            border="#d7deea" if compact else ACCENT_BORDER,
+            padx=12,
+            pady=10,
+        )
+        legend.pack(fill="x", pady=(6, 0))
+        self.label(
+            legend,
+            text=(
+                "Lecture rapide : neuf = rotation tres fraiche, bientot epuise = pool entame, "
+                "cycle imminent = prochaine relance proche."
+            ),
+            fg=SUBTLE_TEXT,
+            wraplength=320 if compact else 760,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+
+        table_card = self.card(
+            parent,
+            bg=CARD_BG if compact else "#fcfbf7",
+            border=ACCENT_BORDER if compact else "#d7d0c1",
+            padx=12,
+            pady=12,
+        )
+        table_card.pack(fill="x", pady=(8, 0))
+        table = self.frame(table_card, bg=table_card.cget("bg"))
+        table.pack(fill="x")
+
+        headers = ["Categorie", "F", "M", "D"]
+        for column_index, header in enumerate(headers):
+            self.label(
+                table,
+                text=header,
+                bg=table.cget("bg"),
+                fg=SUBTLE_TEXT,
+                font=("Arial", 9, "bold"),
+            ).grid(row=0, column=column_index, padx=4, pady=4, sticky="nsew")
+
+        for row_index, row in enumerate(exploration_grid["rows"], start=1):
+            self.label(
+                table,
+                text=row["label"],
+                bg=table.cget("bg"),
+                font=("Arial", 9, "bold"),
+                justify="left",
+                wraplength=110 if compact else 180,
+            ).grid(row=row_index, column=0, padx=(0, 6), pady=4, sticky="w")
+
+            for column_index, cell in enumerate(row["cells"], start=1):
+                cell_bg, cell_fg, cell_border = self._get_exploration_style(cell)
+                cell_card = tk.Frame(
+                    table,
+                    bg=cell_bg,
+                    padx=8,
+                    pady=6,
+                    highlightthickness=1,
+                    highlightbackground=cell_border,
+                    bd=0,
+                )
+                cell_card.grid(
+                    row=row_index,
+                    column=column_index,
+                    padx=3,
+                    pady=3,
+                    sticky="nsew",
+                )
+                cell_text = cell["progress_text"] if compact else f"{cell['state_label']}\n{cell['progress_text']}"
+                self.label(
+                    cell_card,
+                    text=cell_text,
+                    bg=cell_bg,
+                    fg=cell_fg,
+                    font=("Arial", 8, "bold") if compact else ("Arial", 9, "bold"),
+                    justify="center",
+                ).pack()
+
+        for column_index in range(len(headers)):
+            table.grid_columnconfigure(column_index, weight=1)
+
     def _get_mastery_cell_style(self, cell):
         state = cell.get("state")
         if state == "mastered":
@@ -314,3 +474,17 @@ class PresentationShell:
         if state == "unavailable":
             return MUTED_BG, SUBTLE_TEXT, "#d7d0c1"
         return "#f7f9fc", SUBTLE_TEXT, "#d7deea"
+
+    def _get_exploration_style(self, exploration_state):
+        state = (exploration_state or {}).get("state")
+        if state == "fresh":
+            return SUCCESS_BG, SUCCESS_COLOR, SUCCESS_COLOR
+        if state == "warning":
+            return "#fff7e8", WARNING_COLOR, "#ebd29a"
+        if state == "imminent":
+            return "#fff3f1", WARNING_COLOR, "#e0b0a7"
+        if state == "profile_required":
+            return "#eef6ff", ACCENT_COLOR, ACCENT_BORDER
+        if state == "unavailable":
+            return MUTED_BG, SUBTLE_TEXT, "#d7d0c1"
+        return CARD_BG, ACCENT_BORDER, ACCENT_COLOR

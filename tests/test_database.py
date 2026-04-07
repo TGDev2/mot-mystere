@@ -1,6 +1,8 @@
 import unittest
+from contextlib import closing
 from pathlib import Path
 import shutil
+import sqlite3
 import uuid
 
 from motmystere.database import (
@@ -126,6 +128,8 @@ class DatabaseTestCase(unittest.TestCase):
             "Facile",
             ["CHAT", "LION", "OURS"],
             last_word="VACHE",
+            window_size=5,
+            pool_signature="animaux:facile:v1",
             db_path=self.db_path,
         )
 
@@ -138,6 +142,35 @@ class DatabaseTestCase(unittest.TestCase):
 
         self.assertEqual(state["remaining_words"], ["CHAT", "LION", "OURS"])
         self.assertEqual(state["last_word"], "VACHE")
+        self.assertEqual(state["window_size"], 5)
+        self.assertEqual(state["pool_signature"], "animaux:facile:v1")
+
+    def test_setup_database_migrates_word_rotation_metadata_columns(self):
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
+            conn.executescript(
+                """
+                DROP TABLE IF EXISTS word_rotation;
+                CREATE TABLE word_rotation (
+                    player_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    difficulty TEXT NOT NULL,
+                    remaining_words TEXT NOT NULL DEFAULT '[]',
+                    last_word TEXT,
+                    PRIMARY KEY (player_id, category, difficulty)
+                );
+                """
+            )
+
+        setup_database(self.db_path)
+
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
+            columns = {
+                row[1]: row[2]
+                for row in conn.execute("PRAGMA table_info(word_rotation)").fetchall()
+            }
+
+        self.assertIn("window_size", columns)
+        self.assertIn("pool_signature", columns)
 
     def test_recent_players_expose_last_selection_context(self):
         alice = get_or_create_player("Alice", db_path=self.db_path)

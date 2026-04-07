@@ -30,6 +30,7 @@ class RoundSummaryScreen:
         completed_goals,
         mastery_updates,
         breakdown,
+        catalog_rotation=None,
         guided_progress=None,
         guided_recommendation=None,
     ):
@@ -136,6 +137,55 @@ class RoundSummaryScreen:
                 wraplength=760,
                 justify="left",
             ).pack(anchor="w", fill="x", pady=(8, 0))
+        if catalog_rotation is not None and catalog_rotation.get("before") is not None:
+            before_state = catalog_rotation["before"]
+            after_state = catalog_rotation.get("after") or before_state
+            rotation_area = ui.card(container, bg="#f7f9fc", border="#d7deea", padx=18, pady=18)
+            rotation_area.pack(fill="x", pady=(14, 0))
+            ui.section_title(rotation_area, "Rotation du catalogue")
+            ui.label(
+                rotation_area,
+                text=before_state["label"],
+                fg=ACCENT_COLOR,
+                font=("Arial", 11, "bold"),
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x")
+            ui.label(
+                rotation_area,
+                text=(
+                    f"Avant la manche : {before_state['state_label']} ({before_state['progress_text']}). "
+                    f"Apres tirage : {after_state['state_label']} ({after_state['progress_text']})."
+                ),
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(6, 0))
+            ui.render_progress_bar(rotation_area, after_state["ratio"], fill=ACCENT_COLOR)
+            ui.label(
+                rotation_area,
+                text=after_state["detail"],
+                fg=SUBTLE_TEXT,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
+            ui.label(
+                rotation_area,
+                text=(
+                    "Le mot est reserve des le tirage : la rotation avance meme si la manche se termine "
+                    "par une defaite."
+                ),
+                fg=SUBTLE_TEXT,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
+            if after_state.get("note"):
+                ui.label(
+                    rotation_area,
+                    text=after_state["note"],
+                    fg=ACCENT_COLOR,
+                    wraplength=760,
+                    justify="left",
+                ).pack(anchor="w", fill="x", pady=(8, 0))
 
         if guided_progress is not None:
             session_area = ui.card(container, bg="#eef6ff", border="#c8d9f1", padx=18, pady=18)

@@ -33,6 +33,7 @@ from .presentation.screens import (
 from .presentation.theme import APP_BG
 from .scoring import build_score_breakdown
 from .solo_game_service import (
+    build_catalog_exploration_snapshot,
     build_guided_objective,
     build_guided_recommendation,
     create_session_for_player,
@@ -88,6 +89,8 @@ class HangmanApp:
         self.player_name_entry = None
         self.difficulty_menu = None
         self.progression_snapshot = None
+        self.selected_exploration_mount = None
+        self.round_exploration_before = None
 
         self.ui = PresentationShell()
         self.main_menu_screen = MainMenuScreen()
@@ -120,6 +123,7 @@ class HangmanApp:
             widget.destroy()
         self.player_name_entry = None
         self.difficulty_menu = None
+        self.selected_exploration_mount = None
 
     def _set_catalog(self, catalog):
         self.catalog = catalog
@@ -370,12 +374,14 @@ class HangmanApp:
         self.player = None
         self.player_name_var.set("")
         self.progress_var.set("")
+        self.round_exploration_before = None
 
     def _apply_restored_environment(self, summary):
         self.cancel_timer()
         self.session = None
         self.guided_session = None
         self.progression_snapshot = None
+        self.round_exploration_before = None
         if self.catalog_window is not None and self.catalog_window.winfo_exists():
             self.catalog_window.destroy()
         self.catalog_window = None
@@ -487,6 +493,38 @@ class HangmanApp:
         elif available_difficulties:
             self.difficulty_var.set(available_difficulties[0])
         self.update_category_hint()
+
+    def _build_catalog_exploration_snapshot(
+        self,
+        *,
+        selected_category=None,
+        selected_difficulty=None,
+    ):
+        player_id = self.player["id"] if self.player is not None else None
+        return build_catalog_exploration_snapshot(
+            player_id,
+            self.categories,
+            self.category_availability,
+            self.category_display_names,
+            selected_category=selected_category or self.category_var.get(),
+            selected_difficulty=selected_difficulty or self.difficulty_var.get(),
+        )
+
+    def _render_selected_exploration_state(self):
+        if self.selected_exploration_mount is None:
+            return
+
+        for widget in self.selected_exploration_mount.winfo_children():
+            widget.destroy()
+
+        snapshot = self._build_catalog_exploration_snapshot()
+        self.ui.render_catalog_exploration_card(
+            self.selected_exploration_mount,
+            snapshot["selected_state"],
+            title="Etat d'exploration",
+            empty_message=snapshot["empty_message"],
+            tracked=snapshot["tracked"],
+        )
 
     def _build_guided_session_state(self, objective, dashboard, snapshot):
         objective_state = evaluate_guided_objective(
@@ -681,6 +719,7 @@ class HangmanApp:
             f"Niveaux jouables : {available_text} "
             f"(minimum garanti : {MIN_WORD_POOL_SIZE}, pool solide vise : 15 mots par niveau)."
         )
+        self._render_selected_exploration_state()
 
     def _load_player_from_form(self, *, sync_recent_selection=False):
         try:
@@ -732,9 +771,11 @@ class HangmanApp:
         if selected_display_name in self.category_labels:
             self.category_var.set(self.category_labels[selected_display_name])
 
+        self.round_exploration_before = self._build_catalog_exploration_snapshot()["selected_state"]
         try:
             self.session = self._create_session_for_current_selection()
         except ValueError as exc:
+            self.round_exploration_before = None
             messagebox.showerror("Partie indisponible", str(exc))
             self.refresh_difficulty_options()
             self.update_category_hint()
@@ -848,6 +889,12 @@ class HangmanApp:
             reason,
             self.category_availability,
         )
+        rotation_before = self.round_exploration_before
+        rotation_after = self._build_catalog_exploration_snapshot(
+            selected_category=self.session.category,
+            selected_difficulty=self.session.difficulty,
+        )["selected_state"]
+        self.round_exploration_before = None
         self.player = outcome["player"]
         self.progress_var.set(self._build_player_summary(self.player))
         if outcome["progression_snapshot"] is not None:
@@ -896,6 +943,10 @@ class HangmanApp:
             outcome["completed_goals"],
             outcome["mastery_updates"],
             outcome["breakdown"],
+            catalog_rotation={
+                "before": rotation_before,
+                "after": rotation_after,
+            },
             guided_progress=guided_progress,
             guided_recommendation=guided_recommendation,
         )
@@ -911,6 +962,7 @@ class HangmanApp:
         mastery_updates,
         breakdown,
         *,
+        catalog_rotation=None,
         guided_progress=None,
         guided_recommendation=None,
     ):
@@ -924,6 +976,7 @@ class HangmanApp:
             completed_goals=completed_goals,
             mastery_updates=mastery_updates,
             breakdown=breakdown,
+            catalog_rotation=catalog_rotation,
             guided_progress=guided_progress,
             guided_recommendation=guided_recommendation,
         )

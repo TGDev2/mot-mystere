@@ -25,6 +25,7 @@ class MainMenuScreen:
 
         recent_players = app._load_recent_players()
         dashboard, progression = app._get_progression_bundle() if app.player is not None else (None, None)
+        exploration_snapshot = app._build_catalog_exploration_snapshot()
         ui = app.ui
 
         container = ui.frame(app.root, bg=APP_BG, padx=24, pady=24)
@@ -93,9 +94,10 @@ class MainMenuScreen:
                 wraplength=330,
                 justify="left",
             ).pack(anchor="w", fill="x", pady=(0, 8))
-            ui.render_mastery_grid(right, mastery, compact=True)
+            ui.section_title(right, "Exploration du catalogue")
+            ui.render_catalog_exploration_grid(right, exploration_snapshot["grid"], compact=True)
         else:
-            self._render_onboarding_panel(app, right)
+            self._render_onboarding_panel(app, right, exploration_snapshot)
 
         self._render_main_menu_actions(app, container, dashboard, progression)
 
@@ -285,6 +287,8 @@ class MainMenuScreen:
             wraplength=340,
             justify="left",
         ).pack(anchor="w", fill="x", pady=(6, 0))
+        app.selected_exploration_mount = ui.frame(parent, bg=parent.cget("bg"))
+        app.selected_exploration_mount.pack(fill="x")
         self._render_catalog_card(app, parent)
         self._render_backup_card(app, parent)
 
@@ -327,8 +331,16 @@ class MainMenuScreen:
         ui.section_title(parent, "Objectifs actifs")
         ui.render_goal_cards(parent, progression["goals"], limit=2, compact=True)
 
-    def _render_onboarding_panel(self, app, parent):
+    def _render_onboarding_panel(self, app, parent, exploration_snapshot):
         ui = app.ui
+        ui.section_title(parent, "Exploration du catalogue")
+        ui.label(
+            parent,
+            text=exploration_snapshot["empty_message"],
+            fg=ACCENT_COLOR,
+            wraplength=320,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(0, 10))
         ui.section_title(parent, "Parcours solo")
         ui.render_bullets(
             parent,

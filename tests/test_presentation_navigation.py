@@ -78,6 +78,7 @@ class PresentationNavigationTestCase(unittest.TestCase):
                         "completed_goals": [],
                         "mastery_updates": [],
                         "breakdown": None,
+                        "catalog_rotation": None,
                         "guided_progress": None,
                         "guided_recommendation": None,
                     },
