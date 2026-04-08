@@ -16,6 +16,7 @@ from motmystere.database import (
     save_word_rotation_state,
     setup_database,
 )
+from motmystere.scoring import get_attempts_for_difficulty, get_time_limit_for_difficulty
 
 
 def _create_runtime_dir(prefix):
@@ -171,6 +172,85 @@ class DatabaseTestCase(unittest.TestCase):
 
         self.assertIn("window_size", columns)
         self.assertIn("pool_signature", columns)
+
+    def test_setup_database_backfills_game_history_limit_columns(self):
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
+            conn.executescript(
+                """
+                DROP TABLE IF EXISTS game_history;
+                CREATE TABLE game_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    player_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    difficulty TEXT NOT NULL,
+                    secret_word TEXT NOT NULL,
+                    won INTEGER NOT NULL,
+                    end_reason TEXT NOT NULL,
+                    attempts_left INTEGER NOT NULL DEFAULT 0,
+                    time_remaining INTEGER NOT NULL DEFAULT 0,
+                    word_complexity INTEGER NOT NULL DEFAULT 0,
+                    score_earned INTEGER NOT NULL DEFAULT 0,
+                    played_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO game_history (
+                    player_id, category, difficulty, secret_word, won, end_reason,
+                    attempts_left, time_remaining, word_complexity, score_earned
+                )
+                VALUES (1, 'animaux', 'Moyen', 'CHAT', 1, 'won', 3, 18, 20, 150);
+                """
+            )
+
+        setup_database(self.db_path)
+
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
+            columns = {
+                row[1]: row[2]
+                for row in conn.execute("PRAGMA table_info(game_history)").fetchall()
+            }
+            row = conn.execute(
+                "SELECT attempts_limit, time_limit FROM game_history WHERE difficulty = 'Moyen'"
+            ).fetchone()
+
+        self.assertIn("attempts_limit", columns)
+        self.assertIn("time_limit", columns)
+        self.assertEqual(row[0], get_attempts_for_difficulty("Moyen"))
+        self.assertEqual(row[1], get_time_limit_for_difficulty("Moyen"))
+
+    def test_record_game_result_persists_attempt_and_time_limits(self):
+        player = get_or_create_player("Lina", db_path=self.db_path)
+
+        record_game_result(
+            player["id"],
+            won=True,
+            score_earned=160,
+            category="animaux",
+            difficulty="Facile",
+            secret_word="CHAT",
+            end_reason="won",
+            attempts_left=6,
+            time_remaining=31,
+            attempts_limit=10,
+            time_limit=75,
+            word_complexity=20,
+            db_path=self.db_path,
+        )
+
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
+            row = conn.execute(
+                """
+                SELECT attempts_left, time_remaining, attempts_limit, time_limit
+                FROM game_history
+                WHERE player_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (player["id"],),
+            ).fetchone()
+
+        self.assertEqual(row[0], 6)
+        self.assertEqual(row[1], 31)
+        self.assertEqual(row[2], 10)
+        self.assertEqual(row[3], 75)
 
     def test_recent_players_expose_last_selection_context(self):
         alice = get_or_create_player("Alice", db_path=self.db_path)

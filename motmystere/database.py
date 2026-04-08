@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 
 from .app_paths import get_database_path
+from .scoring import get_attempts_for_difficulty, get_time_limit_for_difficulty
 
 
 DEFAULT_DB_PATH = get_database_path()
@@ -51,6 +52,8 @@ def setup_database(db_path=DEFAULT_DB_PATH):
                 end_reason TEXT NOT NULL,
                 attempts_left INTEGER NOT NULL DEFAULT 0,
                 time_remaining INTEGER NOT NULL DEFAULT 0,
+                attempts_limit INTEGER NOT NULL DEFAULT 0,
+                time_limit INTEGER NOT NULL DEFAULT 0,
                 word_complexity INTEGER NOT NULL DEFAULT 0,
                 score_earned INTEGER NOT NULL DEFAULT 0,
                 played_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -74,6 +77,7 @@ def setup_database(db_path=DEFAULT_DB_PATH):
             """
         )
         _ensure_game_history_columns(cursor)
+        _backfill_game_history_limits(cursor)
         _ensure_word_rotation_columns(cursor)
         _migrate_legacy_stats(cursor)
         conn.commit()
@@ -89,6 +93,8 @@ def _ensure_game_history_columns(cursor):
     required_columns = {
         "attempts_left": "INTEGER NOT NULL DEFAULT 0",
         "time_remaining": "INTEGER NOT NULL DEFAULT 0",
+        "attempts_limit": "INTEGER NOT NULL DEFAULT 0",
+        "time_limit": "INTEGER NOT NULL DEFAULT 0",
         "word_complexity": "INTEGER NOT NULL DEFAULT 0",
         "score_earned": "INTEGER NOT NULL DEFAULT 0",
         "played_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -97,6 +103,32 @@ def _ensure_game_history_columns(cursor):
     for column_name, definition in required_columns.items():
         if column_name not in existing_columns:
             cursor.execute(f"ALTER TABLE game_history ADD COLUMN {column_name} {definition}")
+
+
+def _backfill_game_history_limits(cursor):
+    existing_columns = {
+        row["name"] for row in cursor.execute("PRAGMA table_info(game_history)").fetchall()
+    }
+    if not existing_columns or "difficulty" not in existing_columns:
+        return
+
+    for difficulty in ("Facile", "Moyen", "Difficile"):
+        cursor.execute(
+            """
+            UPDATE game_history
+            SET attempts_limit = ?
+            WHERE difficulty = ? AND COALESCE(attempts_limit, 0) <= 0
+            """,
+            (get_attempts_for_difficulty(difficulty), difficulty),
+        )
+        cursor.execute(
+            """
+            UPDATE game_history
+            SET time_limit = ?
+            WHERE difficulty = ? AND COALESCE(time_limit, 0) <= 0
+            """,
+            (get_time_limit_for_difficulty(difficulty), difficulty),
+        )
 
 
 def _ensure_word_rotation_columns(cursor):
@@ -236,6 +268,24 @@ def get_player(player_id, db_path=DEFAULT_DB_PATH):
     return _row_to_player(row)
 
 
+def _resolve_attempt_limit(difficulty, attempts_limit):
+    if attempts_limit is not None:
+        return max(0, int(attempts_limit))
+    try:
+        return get_attempts_for_difficulty(difficulty)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _resolve_time_limit(difficulty, time_limit):
+    if time_limit is not None:
+        return max(0, int(time_limit))
+    try:
+        return get_time_limit_for_difficulty(difficulty)
+    except (TypeError, ValueError):
+        return 0
+
+
 def record_game_result(
     player_id,
     won,
@@ -247,6 +297,8 @@ def record_game_result(
     end_reason=None,
     attempts_left=None,
     time_remaining=None,
+    attempts_limit=None,
+    time_limit=None,
     word_complexity=None,
     db_path=DEFAULT_DB_PATH,
 ):
@@ -292,10 +344,12 @@ def record_game_result(
                     end_reason,
                     attempts_left,
                     time_remaining,
+                    attempts_limit,
+                    time_limit,
                     word_complexity,
                     score_earned
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     player_id,
@@ -306,6 +360,8 @@ def record_game_result(
                     str(end_reason),
                     max(0, int(attempts_left)),
                     max(0, int(time_remaining)),
+                    _resolve_attempt_limit(difficulty, attempts_limit),
+                    _resolve_time_limit(difficulty, time_limit),
                     max(0, int(word_complexity or 0)),
                     score_earned,
                 ),
@@ -641,3 +697,104 @@ def get_player_dashboard(player_id, db_path=DEFAULT_DB_PATH):
         "selection_stats": [dict(row) for row in selection_stats],
         "recent_games": get_recent_games(player_id, db_path=db_path),
     }
+
+
+def get_difficulty_calibration_rows(active_pairs, db_path=DEFAULT_DB_PATH):
+    normalized_pairs = []
+    seen_pairs = set()
+    for category, difficulty in active_pairs:
+        normalized_pair = (str(category).strip(), str(difficulty).strip())
+        if not normalized_pair[0] or not normalized_pair[1] or normalized_pair in seen_pairs:
+            continue
+        seen_pairs.add(normalized_pair)
+        normalized_pairs.append(normalized_pair)
+
+    if not normalized_pairs:
+        return []
+
+    pair_placeholders = ", ".join("(?, ?)" for _ in normalized_pairs)
+    params = [item for pair in normalized_pairs for item in pair]
+    query = f"""
+        WITH active_pairs(category, difficulty) AS (
+            VALUES {pair_placeholders}
+        ),
+        pair_games AS (
+            SELECT gh.*
+            FROM game_history gh
+            INNER JOIN active_pairs ap
+                ON ap.category = gh.category
+                AND ap.difficulty = gh.difficulty
+        ),
+        pair_player_counts AS (
+            SELECT
+                category,
+                difficulty,
+                player_id,
+                COUNT(*) AS player_games
+            FROM pair_games
+            GROUP BY category, difficulty, player_id
+        ),
+        dominant_counts AS (
+            SELECT
+                category,
+                difficulty,
+                MAX(player_games) AS dominant_player_games
+            FROM pair_player_counts
+            GROUP BY category, difficulty
+        )
+        SELECT
+            ap.category,
+            ap.difficulty,
+            COUNT(pg.id) AS games_played,
+            COALESCE(SUM(pg.won), 0) AS wins,
+            COUNT(DISTINCT pg.player_id) AS distinct_players,
+            COALESCE(
+                ROUND(MAX(dc.dominant_player_games) * 1.0 / NULLIF(COUNT(pg.id), 0), 4),
+                0.0
+            ) AS dominant_player_share,
+            COALESCE(
+                ROUND(AVG(CASE WHEN pg.end_reason = 'time' THEN 1.0 ELSE 0.0 END), 4),
+                0.0
+            ) AS timeout_rate,
+            COALESCE(
+                ROUND(AVG(CASE WHEN pg.end_reason = 'attempts' THEN 1.0 ELSE 0.0 END), 4),
+                0.0
+            ) AS attempt_fail_rate,
+            ROUND(
+                AVG(
+                    CASE
+                        WHEN pg.won = 1 AND COALESCE(pg.time_limit, 0) > 0
+                            THEN pg.time_remaining * 1.0 / pg.time_limit
+                        ELSE NULL
+                    END
+                ),
+                4
+            ) AS avg_time_margin_on_wins,
+            ROUND(
+                AVG(
+                    CASE
+                        WHEN pg.won = 1 AND COALESCE(pg.attempts_limit, 0) > 0
+                            THEN pg.attempts_left * 1.0 / pg.attempts_limit
+                        ELSE NULL
+                    END
+                ),
+                4
+            ) AS avg_attempt_margin_on_wins,
+            COALESCE(ROUND(AVG(pg.score_earned), 1), 0.0) AS avg_score,
+            COALESCE(ROUND(AVG(pg.word_complexity), 1), 0.0) AS avg_complexity,
+            MAX(pg.played_at) AS last_played_at
+        FROM active_pairs ap
+        LEFT JOIN pair_games pg
+            ON pg.category = ap.category
+            AND pg.difficulty = ap.difficulty
+        LEFT JOIN dominant_counts dc
+            ON dc.category = ap.category
+            AND dc.difficulty = ap.difficulty
+        GROUP BY ap.category, ap.difficulty
+        ORDER BY ap.category ASC, ap.difficulty ASC
+    """
+
+    with closing(_connect(db_path)) as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    return [dict(row) for row in rows]

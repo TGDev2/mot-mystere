@@ -11,8 +11,10 @@ from .categories import (
     get_category_difficulty_breakdown,
 )
 from .database import get_recent_players
+from .difficulty_calibration import get_difficulty_calibration_bundle
 from .presentation import (
     CATALOG_OVERLAY,
+    DIFFICULTY_CALIBRATION_OVERLAY,
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
     MAIN_MENU_SCREEN,
@@ -24,6 +26,7 @@ from .presentation import (
 )
 from .presentation.screens import (
     CatalogScreen,
+    DifficultyCalibrationScreen,
     GameRoundScreen,
     LeaderboardScreen,
     MainMenuScreen,
@@ -101,6 +104,7 @@ class HangmanApp:
         self.player_dashboard_screen = PlayerDashboardScreen()
         self.leaderboard_screen = LeaderboardScreen()
         self.catalog_screen = CatalogScreen()
+        self.difficulty_calibration_screen = DifficultyCalibrationScreen()
         self.presentation_router = self._build_presentation_router()
 
         self.show_main_menu()
@@ -207,6 +211,7 @@ class HangmanApp:
                     self,
                     banner_message=banner_message,
                 ),
+                DIFFICULTY_CALIBRATION_OVERLAY: lambda: self.difficulty_calibration_screen.render(self),
             },
         )
 
@@ -262,6 +267,12 @@ class HangmanApp:
             CATALOG_OVERLAY,
             banner_message=banner_message,
         )
+
+    def get_difficulty_calibration_bundle(self):
+        return get_difficulty_calibration_bundle(self.catalog)
+
+    def show_difficulty_calibration_overlay(self):
+        self.presentation_router.open_overlay(DIFFICULTY_CALIBRATION_OVERLAY)
 
     def refresh_catalog_overlay(self):
         self._reload_catalog_state(

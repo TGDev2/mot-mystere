@@ -20,6 +20,7 @@ class GameSession:
     difficulty: str
     secret_word: str
     word_profile: WordProfile
+    attempts_limit: int
     attempts_left: int
     time_limit: int
     time_remaining: int
@@ -51,14 +52,15 @@ class GameSession:
         )
 
         selected_profile = random_source.choice(candidate_pool)
-        attempts_left = get_attempts_for_difficulty(difficulty)
+        attempts_limit = get_attempts_for_difficulty(difficulty)
         time_limit = get_time_limit_for_difficulty(difficulty)
         return cls(
             category=category,
             difficulty=difficulty,
             secret_word=selected_profile.text,
             word_profile=selected_profile,
-            attempts_left=attempts_left,
+            attempts_limit=attempts_limit,
+            attempts_left=attempts_limit,
             time_limit=time_limit,
             time_remaining=time_limit,
         )

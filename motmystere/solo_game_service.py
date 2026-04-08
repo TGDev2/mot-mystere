@@ -610,6 +610,8 @@ def resolve_round(player, session, reason, category_availability, db_path=None):
         end_reason=reason,
         attempts_left=session.attempts_left,
         time_remaining=session.time_remaining,
+        attempts_limit=session.attempts_limit,
+        time_limit=session.time_limit,
         word_complexity=session.word_complexity,
         **kwargs,
     )

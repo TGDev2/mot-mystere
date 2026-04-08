@@ -412,4 +412,10 @@ class MainMenuScreen:
             side="left",
             padx=(0, 8),
         )
+        tk.Button(
+            buttons,
+            text="Pilotage difficulte",
+            command=app.show_difficulty_calibration_overlay,
+            width=20,
+        ).pack(side="left", padx=(0, 8))
         tk.Button(buttons, text="Quitter", command=app.close, width=12).pack(side="left")

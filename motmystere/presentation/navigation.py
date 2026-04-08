@@ -9,6 +9,7 @@ GUIDED_SESSION_SUMMARY_SCREEN = "guided_session_summary"
 PLAYER_DASHBOARD_OVERLAY = "player_dashboard"
 LEADERBOARD_OVERLAY = "leaderboard"
 CATALOG_OVERLAY = "catalog"
+DIFFICULTY_CALIBRATION_OVERLAY = "difficulty_calibration"
 
 
 @dataclass(frozen=True)

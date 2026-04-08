@@ -74,6 +74,12 @@ class CatalogScreen:
             side="left",
             padx=(0, 8),
         )
+        tk.Button(
+            actions,
+            text="Pilotage difficulte",
+            command=app.show_difficulty_calibration_overlay,
+            width=20,
+        ).pack(side="left", padx=(0, 8))
         tk.Button(actions, text="Fermer", command=lambda: self._close(app), width=12).pack(side="left")
 
         if banner_message:
