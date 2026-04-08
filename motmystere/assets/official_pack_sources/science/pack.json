@@ -1,0 +1,25 @@
+{
+  "id": "science",
+  "label": "Pack Science",
+  "enabled": true,
+  "categories": [
+    {
+      "id": "informatique",
+      "label": "Informatique",
+      "source": "informatique.txt",
+      "enabled": true
+    },
+    {
+      "id": "espace",
+      "label": "Espace",
+      "source": "espace.txt",
+      "enabled": true
+    },
+    {
+      "id": "sciences",
+      "label": "Sciences",
+      "source": "sciences.txt",
+      "enabled": true
+    }
+  ]
+}

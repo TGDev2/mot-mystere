@@ -118,6 +118,62 @@ class CatalogGameLogicTestCase(unittest.TestCase):
             ],
         )
 
+    def test_reload_catalog_state_keeps_current_selection_when_new_pack_is_added(self):
+        root_dir = self._make_workspace()
+        base_dir = root_dir / "base"
+        packs_dir = root_dir / "packs"
+        base_dir.mkdir()
+        packs_dir.mkdir()
+        self._write_words(base_dir / "animaux.txt", FULL_SPECTRUM_WORDS)
+
+        bonus_pack_dir = packs_dir / "bonus"
+        bonus_pack_dir.mkdir()
+        self._write_words(bonus_pack_dir / "sports.txt", FULL_SPECTRUM_WORDS)
+        self._write_json(
+            bonus_pack_dir / "pack.json",
+            {
+                "id": "bonus",
+                "label": "Pack Bonus",
+                "categories": [
+                    {
+                        "id": "sports",
+                        "label": "Sports",
+                        "source": "sports.txt",
+                    }
+                ],
+            },
+        )
+
+        updated_catalog = load_category_catalog(base_dir=base_dir, local_pack_dir=packs_dir)
+
+        app = HangmanApp.__new__(HangmanApp)
+        app.category_var = StubVar("animaux")
+        app.category_display_var = StubVar("Animaux")
+        app.difficulty_var = StubVar("Facile")
+        app.category_display_names = {}
+        app.category_labels = {}
+
+        calls = []
+        app.show_main_menu = lambda banner_message="": calls.append(("menu", banner_message))
+        app.show_catalog_overlay = lambda banner_message="": calls.append(("catalog", banner_message))
+
+        banner_message = app._reload_catalog_state(
+            updated_catalog,
+            banner_message="Pack ajoute : Pack Bonus.",
+            reopen_catalog=True,
+        )
+
+        self.assertEqual(app.category_var.get(), "animaux")
+        self.assertEqual(app.difficulty_var.get(), "Facile")
+        self.assertEqual(banner_message, "Pack ajoute : Pack Bonus.")
+        self.assertEqual(
+            calls,
+            [
+                ("menu", "Pack ajoute : Pack Bonus."),
+                ("catalog", "Pack ajoute : Pack Bonus."),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,13 +6,19 @@ from pathlib import Path
 project_dir = Path(SPECPATH)
 assets_dir = project_dir / "motmystere" / "assets" / "wordlists"
 text_assets = [(str(path), "motmystere/assets/wordlists") for path in assets_dir.glob("*.txt")]
+official_packs_dir = project_dir / "motmystere" / "assets" / "official_packs"
+official_pack_assets = [
+    (str(path), "motmystere/assets/official_packs")
+    for path in official_packs_dir.glob("*")
+    if path.is_file()
+]
 
 
 a = Analysis(
     ["main.py"],
     pathex=[str(project_dir)],
     binaries=[],
-    datas=text_assets,
+    datas=text_assets + official_pack_assets,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

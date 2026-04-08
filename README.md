@@ -13,6 +13,8 @@ MotMystere est un jeu du pendu desktop en Python/Tkinter, centre sur une boucle 
 - Calibration des manches par niveau de difficulte, longueur, lettres rares et repetition.
 - Niveaux affiches uniquement lorsqu'un vrai pool de mots est disponible pour tenir la promesse.
 - Catalogue extensible : packs locaux activables/desactivables sans modifier le code.
+- Parcours d'import guide : preview avant installation, import `.zip` nominal, activation immediate ou differee.
+- Packs officiels embarques : `voyage.zip`, `culture.zip` et `science.zip`, prets a installer depuis l'interface.
 - Rotation persistante des mots par joueur, categorie et niveau pour eviter les doublons avant epuisement du pool.
 - Timer et nombre d'essais differencies selon la difficulte.
 - Score persistant aligne sur la difficulte, la complexite du mot, le temps et les essais conserves.
@@ -117,6 +119,24 @@ Regles du catalogue :
 - une categorie est jouable seulement si au moins un niveau atteint le minimum garanti (`5` mots).
 - si une categorie ne couvre qu'une partie des niveaux, seuls les niveaux soutenus sont exposes.
 - les packs invalides, incomplets ou avec fichiers manquants sont signales dans l'interface sans casser l'historique existant.
+
+Depuis l'overlay `Catalogue`, le parcours nominal est maintenant :
+
+1. importer une archive `.zip` ;
+2. lire la preview du pack (categories ajoutees, jouables, bloquees, statut) ;
+3. choisir `Installer et activer` ou `Installer sans activer`.
+
+Le chemin historique par dossier reste disponible comme option expert.
+
+## Packs officiels embarques
+
+Le build embarque aussi trois packs fiables prets a installer depuis l'interface :
+
+- `voyage.zip` : `Capitales`, `Monuments`, `Transports`
+- `culture.zip` : `Cinema`, `Litterature`, `Mythologie`
+- `science.zip` : `Informatique`, `Espace`, `Sciences`
+
+Chaque categorie officielle fournit au moins `45` mots uniques, avec `15` mots minimum en `Facile`, `Moyen` et `Difficile`.
 
 ## Lancer les tests
 

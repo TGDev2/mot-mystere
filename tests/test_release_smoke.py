@@ -31,6 +31,8 @@ class ReleaseSmokeTestCase(unittest.TestCase):
         self.assertEqual(result["games_played"], 2)
         self.assertGreater(result["score_total"], 0)
         self.assertGreaterEqual(result["leaderboard_size"], 1)
+        self.assertIn(result["imported_pack_id"], {"voyage", "culture", "science"})
+        self.assertIn("::", result["played_category"])
 
 
 if __name__ == "__main__":

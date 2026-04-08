@@ -1,0 +1,25 @@
+{
+  "id": "voyage",
+  "label": "Pack Voyage",
+  "enabled": true,
+  "categories": [
+    {
+      "id": "capitales",
+      "label": "Capitales",
+      "source": "capitales.txt",
+      "enabled": true
+    },
+    {
+      "id": "monuments",
+      "label": "Monuments",
+      "source": "monuments.txt",
+      "enabled": true
+    },
+    {
+      "id": "transports",
+      "label": "Transports",
+      "source": "transports.txt",
+      "enabled": true
+    }
+  ]
+}

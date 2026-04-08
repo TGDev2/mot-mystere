@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 import zipfile
 
+from .archive_utils import ArchiveInspectionError, extract_archive_to_staging
 from .app_paths import (
     APP_NAME,
     get_backup_directory,
@@ -219,40 +220,25 @@ class BackupService:
 
     def _extract_archive_to_staging(self, archive_path, staging_root):
         try:
-            with zipfile.ZipFile(archive_path) as archive:
-                members = archive.infolist()
-                if not members:
-                    raise BackupServiceError("La sauvegarde est vide.")
+            normalized_names = extract_archive_to_staging(archive_path, staging_root)
+            has_manifest = False
+            for normalized_name in normalized_names:
+                top_level = normalized_name.parts[0]
+                if top_level not in self.ALLOWED_ARCHIVE_ROOTS:
+                    raise BackupServiceError(
+                        f"La sauvegarde contient un contenu inattendu: {normalized_name.as_posix()}."
+                    )
+                if normalized_name == PurePosixPath(self.MANIFEST_NAME):
+                    has_manifest = True
+                elif top_level == self.MANIFEST_NAME:
+                    raise BackupServiceError("La sauvegarde contient un manifest.json mal place.")
 
-                normalized_names = {}
-                seen_names = set()
-                has_manifest = False
-                for member in members:
-                    normalized_name = self._normalize_archive_name(member.filename)
-                    if normalized_name in seen_names:
-                        raise BackupServiceError("La sauvegarde contient deux entrees en conflit.")
-                    seen_names.add(normalized_name)
-                    normalized_names[member.filename] = normalized_name
-                    if normalized_name == PurePosixPath(self.MANIFEST_NAME):
-                        has_manifest = True
-
-                if not has_manifest:
-                    raise BackupServiceError("La sauvegarde ne contient pas de manifest.json.")
-
-                for member in members:
-                    normalized_name = normalized_names[member.filename]
-                    destination = staging_root.joinpath(*normalized_name.parts)
-                    if member.is_dir():
-                        destination.mkdir(parents=True, exist_ok=True)
-                        continue
-
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    with archive.open(member, "r") as source, destination.open("wb") as target:
-                        shutil.copyfileobj(source, target)
+            if not has_manifest:
+                raise BackupServiceError("La sauvegarde ne contient pas de manifest.json.")
         except BackupServiceError:
             raise
-        except (OSError, zipfile.BadZipFile, ValueError) as exc:
-            raise BackupServiceError(f"Archive invalide: {exc}") from exc
+        except ArchiveInspectionError as exc:
+            raise BackupServiceError(str(exc)) from exc
 
         manifest_path = staging_root / self.MANIFEST_NAME
         try:
@@ -261,32 +247,6 @@ class BackupService:
             raise BackupServiceError("Le manifest.json de la sauvegarde est invalide.") from exc
 
         return self._validate_manifest(manifest)
-
-    def _normalize_archive_name(self, filename):
-        raw_name = str(filename or "").replace("\\", "/").strip()
-        if not raw_name:
-            raise BackupServiceError("La sauvegarde contient une entree vide.")
-        if raw_name.startswith("/"):
-            raise BackupServiceError("La sauvegarde contient un chemin absolu interdit.")
-
-        normalized = PurePosixPath(raw_name)
-        parts = normalized.parts
-        if not parts:
-            raise BackupServiceError("La sauvegarde contient une entree vide.")
-        if any(part in {"", ".", ".."} for part in parts):
-            raise BackupServiceError("La sauvegarde contient un chemin relatif interdit.")
-        if ":" in parts[0]:
-            raise BackupServiceError("La sauvegarde contient un chemin Windows interdit.")
-
-        top_level = parts[0]
-        if top_level not in self.ALLOWED_ARCHIVE_ROOTS:
-            raise BackupServiceError(
-                f"La sauvegarde contient un contenu inattendu: {raw_name}."
-            )
-        if top_level == self.MANIFEST_NAME and len(parts) != 1:
-            raise BackupServiceError("La sauvegarde contient un manifest.json mal place.")
-
-        return normalized
 
     def _validate_manifest(self, manifest):
         if not isinstance(manifest, dict):

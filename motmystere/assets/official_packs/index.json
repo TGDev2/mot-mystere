@@ -1,0 +1,64 @@
+{
+  "packs": [
+    {
+      "id": "voyage",
+      "label": "Pack Voyage",
+      "archive": "voyage.zip",
+      "description": "Capitales, monuments et transports pour etendre la rejouabilite avec un pack fiable pret a installer.",
+      "categories": [
+        {
+          "id": "capitales",
+          "label": "Capitales"
+        },
+        {
+          "id": "monuments",
+          "label": "Monuments"
+        },
+        {
+          "id": "transports",
+          "label": "Transports"
+        }
+      ]
+    },
+    {
+      "id": "culture",
+      "label": "Pack Culture",
+      "archive": "culture.zip",
+      "description": "Cinema, litterature et mythologie pour renouveler les parties avec des univers culturels lisibles.",
+      "categories": [
+        {
+          "id": "cinema",
+          "label": "Cinema"
+        },
+        {
+          "id": "litterature",
+          "label": "Litterature"
+        },
+        {
+          "id": "mythologie",
+          "label": "Mythologie"
+        }
+      ]
+    },
+    {
+      "id": "science",
+      "label": "Pack Science",
+      "archive": "science.zip",
+      "description": "Informatique, espace et sciences pour ajouter des pools calibres sur des themes techniques et grand public.",
+      "categories": [
+        {
+          "id": "informatique",
+          "label": "Informatique"
+        },
+        {
+          "id": "espace",
+          "label": "Espace"
+        },
+        {
+          "id": "sciences",
+          "label": "Sciences"
+        }
+      ]
+    }
+  ]
+}

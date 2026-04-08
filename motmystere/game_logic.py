@@ -49,6 +49,8 @@ class HangmanApp:
         self.backup_service = BackupService()
         self.catalog_service = CatalogService()
         self.catalog_window = None
+        self.catalog_import_preview_window = None
+        self.catalog_import_preview = None
         self.catalog = None
         self.categories = {}
         self.category_availability = {}
@@ -108,6 +110,7 @@ class HangmanApp:
 
     def close(self):
         self.cancel_timer()
+        self.close_catalog_pack_preview()
         self.root.destroy()
 
     def cancel_timer(self):
@@ -243,7 +246,7 @@ class HangmanApp:
         return (
             f"{len(self.categories)} categorie(s) jouables chargees. "
             f"Packs locaux : {active_local} actif(s), {disabled_local} desactive(s), {invalid_local} invalide(s). "
-            f"Ajoutez vos packs dans {example_manifest}."
+            f"Importez un .zip depuis le produit, installez un pack officiel fiable, ou utilisez le dossier expert {example_manifest}."
         )
 
     def _build_catalog_issue_lines(self, limit=3):
@@ -285,28 +288,100 @@ class HangmanApp:
             reopen_catalog=True,
         )
 
-    def import_catalog_pack(self):
+    def _get_official_pack_library(self):
+        try:
+            return self.catalog_service.list_official_packs(), ""
+        except CatalogServiceError as exc:
+            return (), str(exc)
+
+    def preview_catalog_pack_zip(self):
+        selected_path = filedialog.askopenfilename(
+            parent=self.catalog_window if self.catalog_window is not None else self.root,
+            title="Choisir une archive de pack",
+            filetypes=[("Archives ZIP", "*.zip"), ("Tous les fichiers", "*.*")],
+        )
+        if not selected_path:
+            return
+        self._preview_catalog_pack_source(selected_path)
+
+    def preview_catalog_pack_directory(self):
         selected_dir = filedialog.askdirectory(
             parent=self.catalog_window if self.catalog_window is not None else self.root,
             title="Choisir un dossier de pack",
         )
         if not selected_dir:
             return
+        self._preview_catalog_pack_source(selected_dir)
 
+    def preview_official_catalog_pack(self, archive_path):
+        self._preview_catalog_pack_source(archive_path)
+
+    def _preview_catalog_pack_source(self, source_path):
         try:
-            catalog, pack_summary = self.catalog_service.import_pack_from_directory(selected_dir)
+            preview = self.catalog_service.inspect_pack_source(source_path)
         except CatalogServiceError as exc:
-            messagebox.showerror("Ajouter un pack", str(exc))
+            messagebox.showerror("Catalogue", str(exc))
             return
 
-        status_message = f"Pack ajoute : {pack_summary.label}."
-        if not pack_summary.effective_enabled:
-            status_message = f"{status_message} Il reste desactive tant que vous ne l'activez pas."
+        self.catalog_import_preview = preview
+        self.catalog_screen.render_import_preview_dialog(self, preview)
+
+    def close_catalog_pack_preview(self):
+        preview_window = getattr(self, "catalog_import_preview_window", None)
+        if preview_window is not None and preview_window.winfo_exists():
+            preview_window.destroy()
+        self.catalog_import_preview_window = None
+        self.catalog_import_preview = None
+
+    def _build_pack_import_status_message(self, preview, pack_summary):
+        parts = [f"Pack ajoute : {pack_summary.label}."]
+        parts.append(
+            f"{len(preview.categories_added)} categorie(s) inspectee(s), "
+            f"{len(preview.playable_after_activation)} jouable(s) apres activation."
+        )
+        if pack_summary.effective_enabled:
+            parts.append(
+                f"Statut final : actif, {pack_summary.loaded_category_count} categorie(s) chargee(s) maintenant."
+            )
+        else:
+            parts.append("Statut final : installe mais desactive jusqu'a activation manuelle.")
+
+        if preview.installed_non_playable_categories:
+            sample_labels = ", ".join(
+                category.label for category in preview.installed_non_playable_categories[:3]
+            )
+            parts.append(
+                f"{len(preview.installed_non_playable_categories)} categorie(s) restent installees mais non jouables: {sample_labels}."
+            )
+        elif preview.alerts:
+            parts.append(f"{len(preview.alerts)} alerte(s) restent visibles dans le catalogue.")
+
+        return " ".join(parts)
+
+    def confirm_catalog_pack_import(self, enabled):
+        if self.catalog_import_preview is None:
+            return
+
+        source_path = self.catalog_import_preview.source_path
+        try:
+            catalog, pack_summary = self.catalog_service.import_pack_from_source(
+                source_path,
+                enabled=enabled,
+            )
+        except CatalogServiceError as exc:
+            messagebox.showerror("Importer un pack", str(exc))
+            return
+
+        preview = self.catalog_import_preview
+        self.close_catalog_pack_preview()
         self._reload_catalog_state(
             catalog,
-            banner_message=status_message,
+            banner_message=self._build_pack_import_status_message(preview, pack_summary),
             reopen_catalog=True,
         )
+
+    def import_catalog_pack(self):
+        self.preview_catalog_pack_directory()
 
     def export_local_data(self):
         suggested_path = self.backup_service.build_backup_archive_path()
@@ -382,6 +457,7 @@ class HangmanApp:
         self.guided_session = None
         self.progression_snapshot = None
         self.round_exploration_before = None
+        self.close_catalog_pack_preview()
         if self.catalog_window is not None and self.catalog_window.winfo_exists():
             self.catalog_window.destroy()
         self.catalog_window = None

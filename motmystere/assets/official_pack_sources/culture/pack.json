@@ -1,0 +1,25 @@
+{
+  "id": "culture",
+  "label": "Pack Culture",
+  "enabled": true,
+  "categories": [
+    {
+      "id": "cinema",
+      "label": "Cinema",
+      "source": "cinema.txt",
+      "enabled": true
+    },
+    {
+      "id": "litterature",
+      "label": "Litterature",
+      "source": "litterature.txt",
+      "enabled": true
+    },
+    {
+      "id": "mythologie",
+      "label": "Mythologie",
+      "source": "mythologie.txt",
+      "enabled": true
+    }
+  ]
+}

@@ -7,6 +7,8 @@ APP_NAME = "MotMystere"
 PACKAGE_DIR = Path(__file__).resolve().parent
 WORDLISTS_DIR = PACKAGE_DIR / "assets" / "wordlists"
 BUNDLED_WORDLISTS_DIR = Path("motmystere") / "assets" / "wordlists"
+OFFICIAL_PACKS_DIR = PACKAGE_DIR / "assets" / "official_packs"
+BUNDLED_OFFICIAL_PACKS_DIR = Path("motmystere") / "assets" / "official_packs"
 
 
 def get_resource_directory():
@@ -16,6 +18,19 @@ def get_resource_directory():
             return bundled_dir
         return Path(sys._MEIPASS)
     return WORDLISTS_DIR
+
+
+def get_official_packs_directory():
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        bundled_dir = Path(sys._MEIPASS) / BUNDLED_OFFICIAL_PACKS_DIR
+        if bundled_dir.exists():
+            return bundled_dir
+        return Path(sys._MEIPASS)
+    return OFFICIAL_PACKS_DIR
+
+
+def get_official_pack_index_path():
+    return get_official_packs_directory() / "index.json"
 
 
 def get_data_directory():

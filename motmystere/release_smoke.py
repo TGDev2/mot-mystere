@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from .app_paths import get_database_path
-from .categories import get_supported_difficulties, load_categories
+from .catalog_service import CatalogService
 from .database import (
     get_leaderboard_data,
     get_player_dashboard,
@@ -50,15 +50,30 @@ def run_release_smoke_test(db_path=None):
     if not db_path.exists():
         raise RuntimeError("La base locale n'a pas ete creee pendant le smoke test.")
 
-    categories = load_categories()
-    if not categories:
-        raise RuntimeError("Aucune categorie n'est disponible pour le smoke test.")
-    category_availability = {
-        key: get_supported_difficulties(words)
-        for key, words in categories.items()
-    }
+    runtime_dir = db_path.parent
+    catalog_service = CatalogService(
+        pack_dir=runtime_dir / "packs",
+        state_path=runtime_dir / "catalog_state.json",
+    )
+    official_packs = catalog_service.list_official_packs()
+    if not official_packs:
+        raise RuntimeError("Aucun pack officiel n'est disponible pour le smoke test.")
 
-    category = sorted(categories)[0]
+    imported_catalog, imported_pack = catalog_service.import_pack_from_source(
+        official_packs[0].archive_path,
+        enabled=True,
+    )
+    imported_categories = [
+        category.category_key
+        for category in imported_pack.categories
+        if category.status == "active"
+    ]
+    if not imported_categories:
+        raise RuntimeError("Le smoke test n'a pas reussi a charger de categorie issue d'un pack officiel.")
+
+    categories = dict(imported_catalog.categories)
+    category_availability = dict(imported_catalog.category_availability)
+    category = imported_categories[0]
     player = prepare_player("Smoke Tester", db_path=db_path)
 
     winning_session = create_session_for_player(
@@ -114,6 +129,8 @@ def run_release_smoke_test(db_path=None):
         "games_played": updated_player["games_played"],
         "score_total": updated_player["score_total"],
         "leaderboard_size": len(leaderboard),
+        "imported_pack_id": imported_pack.pack_id,
+        "played_category": category,
         "database_path": str(db_path),
     }
 
