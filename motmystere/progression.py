@@ -6,6 +6,8 @@ SCORE_MILESTONES = (100, 250, 500, 900, 1400, 2100, 3200, 4800, 7000)
 VALIDATED_WINS = 1
 MASTERED_WINS = 3
 RECENT_WINDOW_SIZE = 5
+REVIEW_RECENT_GAMES_SCAN = 8
+FAILED_WORDS_REVIEW_LIMIT = 3
 RECENT_WINDOW_WEIGHTS = (5, 4, 3, 2, 1)
 RECENT_WEIGHTING_LABEL = "5-4-3-2-1"
 RECENT_DRIVER_THRESHOLD = 60
@@ -862,12 +864,112 @@ def _build_learning_profile(mastery, recent_games, category_availability):
         "recent_window_size": RECENT_WINDOW_SIZE,
         "weighting": RECENT_WEIGHTING_LABEL,
     }
-    return learning_profile, recommendation
+    return learning_profile, recommendation, time_signal, error_signal
+
+
+def _build_failed_words_review_option(recent_games, category_availability):
+    targets = []
+    seen_targets = set()
+    for game in (recent_games or ())[:REVIEW_RECENT_GAMES_SCAN]:
+        category = game.get("category")
+        difficulty = game.get("difficulty")
+        secret_word = str(game.get("secret_word") or "").strip().upper()
+        if bool(game.get("won")) or not category or not difficulty or not secret_word:
+            continue
+        if category not in category_availability or difficulty not in category_availability[category]:
+            continue
+
+        target_key = (category, difficulty, secret_word)
+        if target_key in seen_targets:
+            continue
+
+        seen_targets.add(target_key)
+        targets.append(
+            {
+                "category": category,
+                "difficulty": difficulty,
+                "secret_word": secret_word,
+                "label": _format_selection(category, difficulty),
+            }
+        )
+        if len(targets) >= FAILED_WORDS_REVIEW_LIMIT:
+            break
+
+    if not targets:
+        return None
+
+    target_count = len(targets)
+    first_target = targets[0]
+    detail = (
+        f"{target_count} mot(s) perdu(s) recemment peuvent etre rejoues hors rotation normale. "
+        f"Le premier repart sur {first_target['label']}."
+    )
+    return {
+        "kind": "failed_words",
+        "title": "Reviser mes mots rates",
+        "detail": detail,
+        "cta_text": "Reviser mes mots rates",
+        "count": target_count,
+        "category": first_target["category"],
+        "difficulty": first_target["difficulty"],
+        "targets": tuple(targets),
+    }
+
+
+def _build_weak_pair_review_option(dominant_driver, time_signal, error_signal, category_availability):
+    if dominant_driver == "time_pressure":
+        signal = time_signal
+        driver_label = "Temps"
+    elif dominant_driver == "error_pressure":
+        signal = error_signal
+        driver_label = "Erreurs"
+    else:
+        return None
+
+    top_entry = signal.get("top_entry")
+    if top_entry is None:
+        return None
+
+    category = top_entry.get("category")
+    difficulty = top_entry.get("difficulty")
+    if category not in category_availability or difficulty not in category_availability[category]:
+        return None
+
+    selection_text = _format_selection(category, difficulty)
+    detail = (
+        f"{driver_label} reste le signal fragile dominant sur {selection_text}. "
+        "Lancez une revision ciblee hors rotation normale pour retrouver de la marge sur cette paire."
+    )
+    return {
+        "kind": "weak_pair",
+        "driver": dominant_driver,
+        "driver_label": driver_label,
+        "category": category,
+        "difficulty": difficulty,
+        "title": "Travailler mon reglage fragile",
+        "detail": detail,
+        "cta_text": "Travailler mon reglage fragile",
+        "target_value": 2,
+        "max_rounds": 3,
+    }
+
+
+def _build_review_options(recent_games, category_availability, dominant_driver, time_signal, error_signal):
+    return {
+        "failed_words": _build_failed_words_review_option(recent_games, category_availability),
+        "weak_pair": _build_weak_pair_review_option(
+            dominant_driver,
+            time_signal,
+            error_signal,
+            category_availability,
+        ),
+    }
 
 
 def build_progression_snapshot(player, dashboard, category_availability):
     player = player or {}
     dashboard = dashboard or {}
+    recent_games = dashboard.get("recent_games", ())
     mastery = build_mastery_snapshot(
         category_availability,
         dashboard.get("selection_stats", ()),
@@ -888,10 +990,17 @@ def build_progression_snapshot(player, dashboard, category_availability):
         (challenge for challenge in challenges if not challenge["completed"]),
         challenges[0] if challenges else None,
     )
-    learning_profile, personalized_recommendation = _build_learning_profile(
+    learning_profile, personalized_recommendation, time_signal, error_signal = _build_learning_profile(
         mastery,
-        dashboard.get("recent_games", ()),
+        recent_games,
         category_availability,
+    )
+    review_options = _build_review_options(
+        recent_games,
+        category_availability,
+        learning_profile["dominant_driver"],
+        time_signal,
+        error_signal,
     )
 
     return {
@@ -902,6 +1011,7 @@ def build_progression_snapshot(player, dashboard, category_availability):
         "mastery": mastery,
         "learning_profile": learning_profile,
         "personalized_recommendation": personalized_recommendation,
+        "review_options": review_options,
     }
 
 

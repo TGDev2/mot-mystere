@@ -20,6 +20,7 @@ class ProgressionTestCase(unittest.TestCase):
         category,
         difficulty,
         *,
+        secret_word=None,
         won,
         end_reason,
         attempts_left,
@@ -28,6 +29,7 @@ class ProgressionTestCase(unittest.TestCase):
         return {
             "category": category,
             "difficulty": difficulty,
+            "secret_word": secret_word,
             "won": won,
             "end_reason": end_reason,
             "attempts_left": attempts_left,
@@ -178,6 +180,125 @@ class ProgressionTestCase(unittest.TestCase):
         self.assertEqual(recommendation["driver"], "mastery_gap")
         self.assertEqual(recommendation["category"], "pays")
         self.assertEqual(recommendation["difficulty"], "Facile")
+        self.assertIsNone(snapshot["review_options"]["weak_pair"])
+
+    def test_review_options_expose_recent_failed_words_with_dedup_and_original_settings(self):
+        snapshot = build_progression_snapshot(
+            {"score_total": 120},
+            {
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 1, "wins": 0},
+                ],
+                "favorite_category": {"category": "animaux"},
+                "best_difficulty": {"difficulty": "Facile"},
+                "recent_form": {"recent_games": 5, "recent_wins": 1},
+                "recent_games": [
+                    self._recent_game(
+                        "animaux",
+                        "Facile",
+                        secret_word="CHAT",
+                        won=False,
+                        end_reason="attempts",
+                        attempts_left=0,
+                        time_remaining=33,
+                    ),
+                    self._recent_game(
+                        "animaux",
+                        "Facile",
+                        secret_word="CHAT",
+                        won=False,
+                        end_reason="attempts",
+                        attempts_left=0,
+                        time_remaining=12,
+                    ),
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        secret_word="JAPON",
+                        won=False,
+                        end_reason="time",
+                        attempts_left=2,
+                        time_remaining=0,
+                    ),
+                    self._recent_game(
+                        "animaux",
+                        "Moyen",
+                        secret_word="LOUP",
+                        won=False,
+                        end_reason="attempts",
+                        attempts_left=0,
+                        time_remaining=19,
+                    ),
+                    self._recent_game(
+                        "sports",
+                        "Facile",
+                        secret_word="GOLF",
+                        won=False,
+                        end_reason="attempts",
+                        attempts_left=0,
+                        time_remaining=17,
+                    ),
+                ],
+            },
+            self.category_availability,
+        )
+
+        failed_words = snapshot["review_options"]["failed_words"]
+        targets = failed_words["targets"]
+
+        self.assertEqual(failed_words["kind"], "failed_words")
+        self.assertEqual(failed_words["count"], 3)
+        self.assertEqual(
+            [(target["category"], target["difficulty"], target["secret_word"]) for target in targets],
+            [
+                ("animaux", "Facile", "CHAT"),
+                ("pays", "Difficile", "JAPON"),
+                ("animaux", "Moyen", "LOUP"),
+            ],
+        )
+
+    def test_review_options_keep_exact_fragile_pair_instead_of_lowered_recommendation(self):
+        snapshot = build_progression_snapshot(
+            {"score_total": 260},
+            {
+                "selection_stats": [
+                    {"category": "animaux", "difficulty": "Facile", "games_played": 2, "wins": 1},
+                    {"category": "animaux", "difficulty": "Moyen", "games_played": 1, "wins": 0},
+                    {"category": "pays", "difficulty": "Facile", "games_played": 1, "wins": 1},
+                    {"category": "pays", "difficulty": "Moyen", "games_played": 1, "wins": 1},
+                ],
+                "favorite_category": {"category": "animaux"},
+                "best_difficulty": {"difficulty": "Facile"},
+                "recent_form": {"recent_games": 2, "recent_wins": 1},
+                "recent_games": [
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        won=False,
+                        end_reason="time",
+                        attempts_left=2,
+                        time_remaining=0,
+                    ),
+                    self._recent_game(
+                        "pays",
+                        "Difficile",
+                        won=True,
+                        end_reason="won",
+                        attempts_left=2,
+                        time_remaining=8,
+                    ),
+                ],
+            },
+            self.category_availability,
+        )
+
+        recommendation = snapshot["personalized_recommendation"]
+        weak_pair = snapshot["review_options"]["weak_pair"]
+
+        self.assertEqual(recommendation["difficulty"], "Moyen")
+        self.assertEqual(weak_pair["driver"], "time_pressure")
+        self.assertEqual(weak_pair["category"], "pays")
+        self.assertEqual(weak_pair["difficulty"], "Difficile")
 
     def test_personalized_recommendation_switches_to_time_pressure(self):
         snapshot = build_progression_snapshot(

@@ -50,12 +50,22 @@ class GameRoundScreen:
         ).pack(anchor="w", fill="x", pady=(4, 6))
         if app.guided_session is not None and app.guided_session.get("status") == "active":
             objective_state = app.guided_session.get("objective_state") or {}
+            session_kind = str(app.guided_session.get("session_kind") or "")
+            mode_label = app.guided_session.get("mode_label", "Session active")
+            if session_kind.startswith("review_"):
+                session_text = (
+                    f"{mode_label} en cours : {objective_state.get('title', '')} "
+                    f"({objective_state.get('progress_text', '')}). "
+                    "Hors rotation normale."
+                )
+            else:
+                session_text = (
+                    f"{mode_label} en cours : {objective_state.get('title', '')} "
+                    f"({objective_state.get('progress_text', '')})."
+                )
             ui.label(
                 hero,
-                text=(
-                    f"Session guidee en cours : {objective_state.get('title', '')} "
-                    f"({objective_state.get('progress_text', '')})."
-                ),
+                text=session_text,
                 bg=HERO_BG,
                 fg=ACCENT_COLOR,
                 font=("Arial", 10, "bold"),

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 from .database import (
     get_or_create_player,
@@ -10,6 +11,7 @@ from .database import (
 from .categories import DIFFICULTY_LEVELS, format_category_name
 from .game_session import GameSession, get_available_word_profiles
 from .progression import (
+    LOW_RESOURCE_THRESHOLD,
     build_progression_snapshot,
     get_newly_completed_goals,
     get_newly_reached_mastery_states,
@@ -21,6 +23,13 @@ EXPLORATION_EMPTY_MESSAGE = (
     "La rotation est suivie par profil local. Rechargez ou lancez un profil pour voir quels reglages "
     "sont encore frais."
 )
+GUIDED_MODE_LABEL = "Session guidee"
+REVIEW_MODE_LABEL = "Revision ciblee"
+REVIEW_RESOLUTION_LABELS = {
+    "resolved": "Faiblesse resorbee",
+    "improved": "En progres",
+    "still_fragile": "A retravailler",
+}
 
 
 def prepare_player(name, db_path=None):
@@ -253,6 +262,294 @@ def build_guided_recommendation(objective, player, dashboard, progression_snapsh
         "detail": detail,
         "remaining": progress["remaining"],
     }
+
+
+def _review_target_key(category, difficulty, secret_word):
+    return (str(category or "").strip(), str(difficulty or "").strip(), str(secret_word or "").strip().upper())
+
+
+def _build_review_rotation_note():
+    return "Revision hors rotation normale : cette manche ne consomme pas le pool standard."
+
+
+def _build_review_margin_hint(driver):
+    threshold = int(round(LOW_RESOURCE_THRESHOLD * 100))
+    if driver == "time_pressure":
+        return f"objectif = victoire avec plus de {threshold} % de marge temps"
+    return f"objectif = victoire avec plus de {threshold} % de marge essais"
+
+
+def _filter_review_targets_against_catalog(categories, targets):
+    playable_targets = []
+    for target in targets:
+        category = target.get("category")
+        difficulty = target.get("difficulty")
+        secret_word = str(target.get("secret_word") or "").strip().upper()
+        if not category or not difficulty or not secret_word:
+            continue
+        try:
+            available_profiles = get_available_word_profiles(categories, category, difficulty)
+        except ValueError:
+            continue
+        if any(profile.text == secret_word for profile in available_profiles):
+            playable_targets.append(
+                {
+                    "category": category,
+                    "difficulty": difficulty,
+                    "secret_word": secret_word,
+                    "label": target.get("label") or f"{format_category_name(category)} en {difficulty}",
+                }
+            )
+    return tuple(playable_targets)
+
+
+def _find_next_failed_word_target(review_session):
+    played_keys = {
+        _review_target_key(
+            round_data.get("category"),
+            round_data.get("difficulty"),
+            round_data.get("secret_word"),
+        )
+        for round_data in review_session.get("rounds", ())
+    }
+    for target in review_session.get("targets", ()):
+        if _review_target_key(target.get("category"), target.get("difficulty"), target.get("secret_word")) not in played_keys:
+            return target
+    return None
+
+
+def _count_cleaned_failed_word_targets(review_session):
+    won_keys = {
+        _review_target_key(
+            round_data.get("category"),
+            round_data.get("difficulty"),
+            round_data.get("secret_word"),
+        )
+        for round_data in review_session.get("rounds", ())
+        if bool(round_data.get("won"))
+    }
+    return sum(
+        1
+        for target in review_session.get("targets", ())
+        if _review_target_key(target.get("category"), target.get("difficulty"), target.get("secret_word")) in won_keys
+    )
+
+
+def _count_qualified_weak_pair_rounds(review_session):
+    return sum(1 for round_data in review_session.get("rounds", ()) if bool(round_data.get("qualified")))
+
+
+def build_review_session_state(review_option, categories):
+    if review_option is None:
+        return None
+
+    kind = review_option.get("kind")
+    base_state = {
+        "mode_label": REVIEW_MODE_LABEL,
+        "rounds": [],
+        "status": "active",
+        "resolution_status": None,
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+    if kind == "failed_words":
+        targets = _filter_review_targets_against_catalog(categories, review_option.get("targets", ()))
+        if not targets:
+            return None
+        review_session = {
+            **base_state,
+            "session_kind": "review_failed_words",
+            "title": review_option["title"],
+            "targets": targets,
+            "max_rounds": len(targets),
+        }
+    elif kind == "weak_pair":
+        review_session = {
+            **base_state,
+            "session_kind": "review_weak_pair",
+            "title": review_option["title"],
+            "driver": review_option["driver"],
+            "driver_label": review_option["driver_label"],
+            "category": review_option["category"],
+            "difficulty": review_option["difficulty"],
+            "target_value": int(review_option.get("target_value") or 0),
+            "max_rounds": int(review_option.get("max_rounds") or 0),
+        }
+    else:
+        return None
+
+    progress = evaluate_review_session(review_session)
+    review_session["objective_state"] = progress
+    review_session["initial_progress_text"] = progress["progress_text"]
+    review_session["recommendation"] = build_review_recommendation(review_session)
+    return review_session
+
+
+def evaluate_review_session(review_session):
+    if review_session is None:
+        return None
+
+    session_kind = review_session.get("session_kind")
+    rotation_note = _build_review_rotation_note()
+
+    if session_kind == "review_failed_words":
+        targets = review_session.get("targets", ())
+        total_targets = len(targets)
+        rounds = review_session.get("rounds", ())
+        cleaned_targets = _count_cleaned_failed_word_targets(review_session)
+        played_count = min(len(rounds), total_targets)
+        next_target = _find_next_failed_word_target(review_session)
+        completed = total_targets > 0 and next_target is None
+        resolution_status = None
+        if completed:
+            if cleaned_targets == total_targets:
+                resolution_status = "resolved"
+            elif cleaned_targets > 0:
+                resolution_status = "improved"
+            else:
+                resolution_status = "still_fragile"
+
+        if completed and resolution_status == "resolved":
+            detail = "Tous les mots cibles ont ete remportes une fois dans cette revision."
+        elif completed and resolution_status == "improved":
+            detail = "Une partie des mots cibles a ete nettoyee, mais certains resistent encore."
+        elif completed:
+            detail = "Les mots cibles ont tous ete rejoues, sans victoire sur cette revision."
+        elif next_target is not None:
+            remaining = total_targets - played_count
+            detail = (
+                f"Encore {remaining} mot(s) a rejouer. Prochaine manche sur {next_target['label']}. "
+                f"{rotation_note}"
+            )
+        else:
+            detail = rotation_note
+
+        return {
+            "session_kind": session_kind,
+            "mode_label": review_session.get("mode_label", REVIEW_MODE_LABEL),
+            "title": review_session.get("title", "Revision ciblee"),
+            "progress_text": f"{cleaned_targets}/{total_targets} mot(s) nettoye(s)",
+            "detail": detail,
+            "completed": completed,
+            "resolution_status": resolution_status,
+            "resolution_label": REVIEW_RESOLUTION_LABELS.get(resolution_status),
+            "rotation_note": rotation_note,
+        }
+
+    if session_kind == "review_weak_pair":
+        driver = review_session.get("driver")
+        driver_label = review_session.get("driver_label", "Diagnostic")
+        category = review_session.get("category")
+        difficulty = review_session.get("difficulty")
+        selection_text = f"{format_category_name(category)} en {difficulty}"
+        target_value = max(0, int(review_session.get("target_value") or 0))
+        max_rounds = max(0, int(review_session.get("max_rounds") or 0))
+        rounds = review_session.get("rounds", ())
+        qualified_rounds = _count_qualified_weak_pair_rounds(review_session)
+        completed = (
+            (target_value > 0 and qualified_rounds >= target_value)
+            or (max_rounds > 0 and len(rounds) >= max_rounds)
+        )
+        resolution_status = None
+        if completed:
+            if target_value > 0 and qualified_rounds >= target_value:
+                resolution_status = "resolved"
+            elif qualified_rounds > 0:
+                resolution_status = "improved"
+            else:
+                resolution_status = "still_fragile"
+
+        if completed and resolution_status == "resolved":
+            detail = (
+                f"{driver_label} ne domine plus cette revision: {target_value} manche(s) qualifiee(s) "
+                f"sur {selection_text}."
+            )
+        elif completed and resolution_status == "improved":
+            detail = (
+                f"Le reglage progresse sur {selection_text}, mais la marge reste a stabiliser. "
+                f"{rotation_note}"
+            )
+        elif completed:
+            detail = f"La paire fragile {selection_text} a ete rejouee sans manche qualifiee. {rotation_note}"
+        else:
+            needed = max(0, target_value - qualified_rounds)
+            rounds_left = max(0, max_rounds - len(rounds))
+            detail = (
+                f"Encore {needed} manche(s) qualifiee(s) a obtenir sur {selection_text}; "
+                f"{rounds_left} manche(s) max restantes, {_build_review_margin_hint(driver)}. "
+                f"{rotation_note}"
+            )
+
+        return {
+            "session_kind": session_kind,
+            "mode_label": review_session.get("mode_label", REVIEW_MODE_LABEL),
+            "title": review_session.get("title", "Revision ciblee"),
+            "progress_text": f"{qualified_rounds}/{target_value} manche(s) qualifiee(s)",
+            "detail": detail,
+            "completed": completed,
+            "resolution_status": resolution_status,
+            "resolution_label": REVIEW_RESOLUTION_LABELS.get(resolution_status),
+            "rotation_note": rotation_note,
+            "driver_label": driver_label,
+        }
+
+    return None
+
+
+def build_review_recommendation(review_session):
+    progress = evaluate_review_session(review_session)
+    if progress is None or progress.get("completed"):
+        return None
+
+    session_kind = review_session.get("session_kind")
+    if session_kind == "review_failed_words":
+        next_target = _find_next_failed_word_target(review_session)
+        if next_target is None:
+            return None
+        return {
+            "category": next_target["category"],
+            "difficulty": next_target["difficulty"],
+            "title": "Continuer la revision des mots rates",
+            "progress_text": progress["progress_text"],
+            "detail": (
+                f"Prochaine cible issue des defaites recentes sur {next_target['label']}. "
+                "Le mot exact reste force hors rotation normale."
+            ),
+        }
+
+    if session_kind == "review_weak_pair":
+        category = review_session.get("category")
+        difficulty = review_session.get("difficulty")
+        if not category or not difficulty:
+            return None
+        return {
+            "category": category,
+            "difficulty": difficulty,
+            "title": review_session.get("title", "Travailler mon reglage fragile"),
+            "progress_text": progress["progress_text"],
+            "detail": (
+                f"Reprendre {format_category_name(category)} en {difficulty}; "
+                f"{_build_review_margin_hint(review_session.get('driver'))}."
+            ),
+        }
+
+    return None
+
+
+def is_review_round_qualified(review_session, session, reason):
+    if review_session is None or review_session.get("session_kind") != "review_weak_pair" or reason != "won":
+        return False
+
+    driver = review_session.get("driver")
+    if driver == "time_pressure":
+        if max(0, int(session.time_limit or 0)) <= 0:
+            return False
+        return (int(session.time_remaining or 0) / int(session.time_limit or 1)) > LOW_RESOURCE_THRESHOLD
+    if driver == "error_pressure":
+        if max(0, int(session.attempts_limit or 0)) <= 0:
+            return False
+        return (int(session.attempts_left or 0) / int(session.attempts_limit or 1)) > LOW_RESOURCE_THRESHOLD
+    return False
 
 
 def _build_pool_signature(available_words):
@@ -572,6 +869,51 @@ def create_session_for_player(
         **kwargs,
     )
     return session
+
+
+def create_review_session(review_session, categories, *, rng=None):
+    if review_session is None:
+        raise ValueError("Aucune session de revision n'est disponible.")
+
+    session_kind = review_session.get("session_kind")
+    if session_kind == "review_failed_words":
+        target = _find_next_failed_word_target(review_session)
+        if target is None:
+            raise ValueError("Tous les mots de revision ont deja ete joues.")
+
+        available_profiles = get_available_word_profiles(
+            categories,
+            target["category"],
+            target["difficulty"],
+        )
+        if not any(profile.text == target["secret_word"] for profile in available_profiles):
+            raise ValueError("Le mot de revision cible n'est plus disponible dans le catalogue actif.")
+
+        return GameSession.create(
+            categories,
+            target["category"],
+            target["difficulty"],
+            rng=rng,
+            allowed_words=[target["secret_word"]],
+        )
+
+    if session_kind == "review_weak_pair":
+        category = review_session.get("category")
+        difficulty = review_session.get("difficulty")
+        recent_words = [
+            round_data.get("secret_word")
+            for round_data in review_session.get("rounds", ())
+            if round_data.get("secret_word")
+        ]
+        return GameSession.create(
+            categories,
+            category,
+            difficulty,
+            rng=rng,
+            recent_words=recent_words,
+        )
+
+    raise ValueError("Type de session de revision inconnu.")
 
 
 def resolve_round(player, session, reason, category_availability, db_path=None):

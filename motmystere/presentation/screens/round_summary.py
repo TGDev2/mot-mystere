@@ -190,7 +190,7 @@ class RoundSummaryScreen:
         if guided_progress is not None:
             session_area = ui.card(container, bg="#eef6ff", border="#c8d9f1", padx=18, pady=18)
             session_area.pack(fill="x", pady=(14, 0))
-            ui.section_title(session_area, "Session guidee")
+            ui.section_title(session_area, guided_progress.get("mode_label", "Session guidee"))
             ui.label(
                 session_area,
                 text=(
@@ -201,6 +201,14 @@ class RoundSummaryScreen:
                 wraplength=760,
                 justify="left",
             ).pack(anchor="w", fill="x")
+            if guided_progress.get("rotation_note"):
+                ui.label(
+                    session_area,
+                    text=guided_progress["rotation_note"],
+                    fg=SUBTLE_TEXT,
+                    wraplength=760,
+                    justify="left",
+                ).pack(anchor="w", fill="x", pady=(8, 0))
             if guided_recommendation is not None:
                 recommendation_text = (
                     f"{format_category_name(guided_recommendation['category'])} "
@@ -208,7 +216,12 @@ class RoundSummaryScreen:
                     if guided_recommendation.get("category") and guided_recommendation.get("difficulty")
                     else "Reprendre le reglage conseille."
                 )
-                ui.section_title(session_area, "Prochaine manche recommandee")
+                next_title = (
+                    "Prochaine manche de revision"
+                    if str(guided_progress.get("session_kind") or "").startswith("review_")
+                    else "Prochaine manche recommandee"
+                )
+                ui.section_title(session_area, next_title)
                 ui.label(
                     session_area,
                     text=recommendation_text,
@@ -236,6 +249,38 @@ class RoundSummaryScreen:
                 recommendation_area,
                 personalized_recommendation,
             )
+
+        review_options = progression_snapshot.get("review_options") if progression_snapshot is not None else None
+        if (
+            guided_progress is None
+            and title != "Victoire"
+            and review_options is not None
+            and (review_options.get("failed_words") is not None or review_options.get("weak_pair") is not None)
+        ):
+            review_area = ui.card(container, bg="#fff7e8", border="#ebd29a", padx=18, pady=18)
+            review_area.pack(fill="x", pady=(14, 0))
+            ui.section_title(review_area, "Revision ciblee")
+            ui.label(
+                review_area,
+                text=(
+                    "Transformez cette defaite en entrainement concret sans toucher a la rotation normale."
+                ),
+                fg=WARNING_COLOR,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x")
+            if review_options.get("failed_words") is not None:
+                ui.render_review_option_card(
+                    review_area,
+                    review_options["failed_words"],
+                    command=app.start_review_failed_words,
+                )
+            if review_options.get("weak_pair") is not None:
+                ui.render_review_option_card(
+                    review_area,
+                    review_options["weak_pair"],
+                    command=app.start_review_weak_pair,
+                )
 
         if progression_snapshot is not None:
             goal_area = ui.card(container, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
@@ -358,8 +403,31 @@ class RoundSummaryScreen:
         objective_state = app.guided_session.get("objective_state") or app.guided_session["objective"]
         rounds = app.guided_session.get("rounds", ())
         completed = app.guided_session.get("status") == "completed"
-        tone_bg = SUCCESS_BG if completed else WARNING_BG
-        tone_fg = SUCCESS_COLOR if completed else WARNING_COLOR
+        session_kind = str(app.guided_session.get("session_kind") or "")
+        mode_label = app.guided_session.get("mode_label", "Session guidee")
+        resolution_status = app.guided_session.get("resolution_status")
+        is_review_session = session_kind.startswith("review_")
+
+        if is_review_session and completed and resolution_status == "resolved":
+            tone_bg = SUCCESS_BG
+            tone_fg = SUCCESS_COLOR
+            hero_title = objective_state.get("resolution_label") or "Revision ciblee reussie"
+        elif is_review_session and completed and resolution_status == "still_fragile":
+            tone_bg = ERROR_BG
+            tone_fg = ERROR_COLOR
+            hero_title = objective_state.get("resolution_label") or "Revision a retravailler"
+        elif is_review_session:
+            tone_bg = WARNING_BG
+            tone_fg = WARNING_COLOR
+            hero_title = (
+                objective_state.get("resolution_label")
+                if completed
+                else f"{mode_label} interrompue"
+            ) or "Revision ciblee"
+        else:
+            tone_bg = SUCCESS_BG if completed else WARNING_BG
+            tone_fg = SUCCESS_COLOR if completed else WARNING_COLOR
+            hero_title = "Objectif atteint" if completed else f"{mode_label} interrompue"
         wins = sum(1 for round_data in rounds if round_data.get("won"))
         total_score = sum(int(round_data.get("score_earned") or 0) for round_data in rounds)
         goal_titles = []
@@ -383,7 +451,7 @@ class RoundSummaryScreen:
         hero.pack(fill="x")
         ui.label(
             hero,
-            text="Objectif atteint" if completed else "Session guidee interrompue",
+            text=hero_title,
             bg=tone_bg,
             fg=tone_fg,
             font=("Georgia", 24, "bold"),
@@ -406,6 +474,15 @@ class RoundSummaryScreen:
             wraplength=760,
             justify="left",
         ).pack(anchor="w", fill="x")
+        if objective_state.get("rotation_note"):
+            ui.label(
+                hero,
+                text=objective_state["rotation_note"],
+                bg=tone_bg,
+                fg=SUBTLE_TEXT,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(6, 0))
 
         ui.render_metric_cards(
             container,
@@ -442,6 +519,14 @@ class RoundSummaryScreen:
             wraplength=760,
             justify="left",
         ).pack(anchor="w", fill="x")
+        if is_review_session and completed and objective_state.get("resolution_label"):
+            ui.label(
+                details,
+                text=f"Verdict de revision : {objective_state['resolution_label']}.",
+                fg=tone_fg,
+                wraplength=760,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(8, 0))
         if rounds:
             last_round = rounds[-1]
             ui.label(

@@ -131,6 +131,24 @@ class PlayerDashboardScreen:
                 personalized_recommendation,
             )
 
+        review_options = progression.get("review_options") or {}
+        failed_words_option = review_options.get("failed_words")
+        weak_pair_option = review_options.get("weak_pair")
+        if failed_words_option is not None or weak_pair_option is not None:
+            ui.section_title(diagnostic_card, "Revision ciblee")
+            if failed_words_option is not None:
+                ui.render_review_option_card(
+                    diagnostic_card,
+                    failed_words_option,
+                    command=lambda: (profile_window.destroy(), app.start_review_failed_words()),
+                )
+            if weak_pair_option is not None:
+                ui.render_review_option_card(
+                    diagnostic_card,
+                    weak_pair_option,
+                    command=lambda: (profile_window.destroy(), app.start_review_weak_pair()),
+                )
+
         insight_lines = []
         if dashboard["best_difficulty"] is not None:
             best_difficulty = dashboard["best_difficulty"]

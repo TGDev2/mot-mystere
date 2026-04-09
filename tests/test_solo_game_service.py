@@ -3,13 +3,17 @@ from pathlib import Path
 import shutil
 import uuid
 
-from motmystere.database import setup_database
+from motmystere.database import get_word_rotation_state, setup_database
 from motmystere.progression import build_progression_snapshot
 from motmystere.solo_game_service import (
     build_catalog_exploration_snapshot,
     build_guided_objective,
     build_guided_recommendation,
+    build_review_recommendation,
+    build_review_session_state,
     create_session_for_player,
+    create_review_session,
+    evaluate_review_session,
     evaluate_guided_objective,
     get_progression_bundle,
     prepare_player,
@@ -272,6 +276,162 @@ class SoloGameServiceTestCase(unittest.TestCase):
         self.assertEqual(recalibrated["state_label"], "Pool largement neuf")
         self.assertEqual(recalibrated["progress_text"], "5/5 mot(s) frais")
         self.assertEqual(recalibrated["note"], "Pool recalibre sur le catalogue actuel.")
+
+    def test_review_failed_words_session_forces_target_without_touching_rotation(self):
+        lost_session = create_session_for_player(
+            self.player["id"],
+            self.categories,
+            "animaux",
+            "Facile",
+            rng=FixedChoice(),
+            db_path=self.db_path,
+        )
+        resolve_round(
+            self.player,
+            lost_session,
+            "attempts",
+            self.category_availability,
+            db_path=self.db_path,
+        )
+
+        bundle = get_progression_bundle(
+            self.player,
+            self.category_availability,
+            db_path=self.db_path,
+        )
+        review_option = bundle["snapshot"]["review_options"]["failed_words"]
+        review_session = build_review_session_state(review_option, self.categories)
+        rotation_before = get_word_rotation_state(
+            self.player["id"],
+            "animaux",
+            "Facile",
+            db_path=self.db_path,
+        )
+
+        review_round = create_review_session(review_session, self.categories, rng=FixedChoice())
+
+        rotation_after = get_word_rotation_state(
+            self.player["id"],
+            "animaux",
+            "Facile",
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(review_round.secret_word, "CHAT")
+        self.assertEqual(rotation_before, rotation_after)
+        self.assertEqual(review_session["max_rounds"], 1)
+
+    def test_review_weak_pair_session_stays_on_exact_pair_until_resolution(self):
+        review_session = build_review_session_state(
+            {
+                "kind": "weak_pair",
+                "title": "Travailler mon reglage fragile",
+                "driver": "time_pressure",
+                "driver_label": "Temps",
+                "category": "animaux",
+                "difficulty": "Facile",
+                "target_value": 2,
+                "max_rounds": 3,
+            },
+            self.categories,
+        )
+
+        first_round = create_review_session(review_session, self.categories, rng=FixedChoice())
+        review_session["rounds"].append(
+            {
+                "category": first_round.category,
+                "difficulty": first_round.difficulty,
+                "secret_word": first_round.secret_word,
+                "won": True,
+                "qualified": True,
+            }
+        )
+        first_progress = evaluate_review_session(review_session)
+        first_recommendation = build_review_recommendation(review_session)
+
+        second_round = create_review_session(review_session, self.categories, rng=FixedChoice())
+        review_session["rounds"].append(
+            {
+                "category": second_round.category,
+                "difficulty": second_round.difficulty,
+                "secret_word": second_round.secret_word,
+                "won": True,
+                "qualified": True,
+            }
+        )
+        second_progress = evaluate_review_session(review_session)
+
+        self.assertEqual(first_round.category, "animaux")
+        self.assertEqual(first_round.difficulty, "Facile")
+        self.assertFalse(first_progress["completed"])
+        self.assertEqual(first_recommendation["category"], "animaux")
+        self.assertEqual(first_recommendation["difficulty"], "Facile")
+        self.assertTrue(second_progress["completed"])
+        self.assertEqual(second_progress["resolution_status"], "resolved")
+
+    def test_review_session_verdicts_cover_improved_and_still_fragile(self):
+        failed_words_session = build_review_session_state(
+            {
+                "kind": "failed_words",
+                "title": "Reviser mes mots rates",
+                "targets": (
+                    {
+                        "category": "animaux",
+                        "difficulty": "Facile",
+                        "secret_word": "CHAT",
+                        "label": "Animaux en Facile",
+                    },
+                    {
+                        "category": "animaux",
+                        "difficulty": "Facile",
+                        "secret_word": "LION",
+                        "label": "Animaux en Facile",
+                    },
+                ),
+            },
+            self.categories,
+        )
+        failed_words_session["rounds"] = [
+            {
+                "category": "animaux",
+                "difficulty": "Facile",
+                "secret_word": "CHAT",
+                "won": True,
+            },
+            {
+                "category": "animaux",
+                "difficulty": "Facile",
+                "secret_word": "LION",
+                "won": False,
+            },
+        ]
+
+        weak_pair_session = build_review_session_state(
+            {
+                "kind": "weak_pair",
+                "title": "Travailler mon reglage fragile",
+                "driver": "error_pressure",
+                "driver_label": "Erreurs",
+                "category": "animaux",
+                "difficulty": "Facile",
+                "target_value": 2,
+                "max_rounds": 3,
+            },
+            self.categories,
+        )
+        weak_pair_session["rounds"] = [
+            {"qualified": False},
+            {"qualified": False},
+            {"qualified": False},
+        ]
+
+        failed_progress = evaluate_review_session(failed_words_session)
+        weak_progress = evaluate_review_session(weak_pair_session)
+
+        self.assertTrue(failed_progress["completed"])
+        self.assertEqual(failed_progress["resolution_status"], "improved")
+        self.assertTrue(weak_progress["completed"])
+        self.assertEqual(weak_progress["resolution_status"], "still_fragile")
 
     def test_rotation_progression_advances_after_a_lost_round(self):
         before_state = build_catalog_exploration_snapshot(

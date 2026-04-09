@@ -39,9 +39,14 @@ from .solo_game_service import (
     build_catalog_exploration_snapshot,
     build_guided_objective,
     build_guided_recommendation,
+    build_review_recommendation,
+    build_review_session_state,
     create_session_for_player,
+    create_review_session,
     evaluate_guided_objective,
+    evaluate_review_session,
     get_progression_bundle,
+    is_review_round_qualified,
     prepare_player,
     resolve_round,
 )
@@ -613,7 +618,7 @@ class HangmanApp:
             tracked=snapshot["tracked"],
         )
 
-    def _build_guided_session_state(self, objective, dashboard, snapshot):
+    def _build_guided_session_state(self, objective, dashboard, snapshot, *, source):
         objective_state = evaluate_guided_objective(
             objective,
             self.player,
@@ -627,6 +632,8 @@ class HangmanApp:
             snapshot,
         )
         return {
+            "session_kind": "guided_goal" if source == "primary_goal" else "guided_challenge",
+            "mode_label": "Session guidee",
             "objective": objective,
             "objective_state": objective_state,
             "initial_progress_text": objective_state["progress_text"],
@@ -634,6 +641,9 @@ class HangmanApp:
             "recommendation": recommendation,
             "status": "active",
             "started_at": datetime.now().isoformat(timespec="seconds"),
+            "resolution_status": None,
+            "max_rounds": None,
+            "targets": (),
         }
 
     def _start_guided_session(self, source):
@@ -650,7 +660,12 @@ class HangmanApp:
             )
             return
 
-        guided_session = self._build_guided_session_state(objective, dashboard, snapshot)
+        guided_session = self._build_guided_session_state(
+            objective,
+            dashboard,
+            snapshot,
+            source=source,
+        )
         recommendation = guided_session.get("recommendation")
         if recommendation is None or not recommendation.get("category") or not recommendation.get("difficulty"):
             messagebox.showinfo(
@@ -666,6 +681,44 @@ class HangmanApp:
         )
         self._start_round(preserve_guided_session=True)
 
+    def _start_review_session(self, review_key):
+        player = self._load_player_from_form()
+        if player is None:
+            return
+
+        _dashboard, snapshot = self._get_progression_bundle()
+        review_options = (snapshot or {}).get("review_options") or {}
+        review_option = review_options.get(review_key)
+        if review_option is None:
+            messagebox.showinfo(
+                "Revision ciblee",
+                "Aucune session de revision exploitable n'est disponible pour le moment.",
+            )
+            return
+
+        review_session = build_review_session_state(review_option, self.categories)
+        if review_session is None:
+            messagebox.showinfo(
+                "Revision ciblee",
+                "Les cibles de revision ne sont plus jouables avec le catalogue actif.",
+            )
+            return
+
+        recommendation = review_session.get("recommendation")
+        if recommendation is None or not recommendation.get("category") or not recommendation.get("difficulty"):
+            messagebox.showinfo(
+                "Revision ciblee",
+                "La revision ne peut pas demarrer sur une cible jouable.",
+            )
+            return
+
+        self.guided_session = review_session
+        self._sync_selection_to(
+            recommendation.get("category"),
+            recommendation.get("difficulty"),
+        )
+        self._start_round(preserve_guided_session=True, review_mode=True)
+
     def _continue_guided_session(self):
         if self.guided_session is None or self.guided_session.get("status") != "active":
             self.show_main_menu()
@@ -680,6 +733,10 @@ class HangmanApp:
             recommendation.get("category"),
             recommendation.get("difficulty"),
         )
+        review_mode = str(self.guided_session.get("session_kind") or "").startswith("review_")
+        if review_mode:
+            self._start_round(preserve_guided_session=True, review_mode=True)
+            return
         self.replay_current_selection(preserve_guided_session=True)
 
     def _stop_guided_session_after_round(self):
@@ -691,9 +748,14 @@ class HangmanApp:
         self.show_guided_session_summary()
 
     def stop_guided_session_from_game(self):
+        mode_label = (
+            self.guided_session.get("mode_label", "Session active")
+            if self.guided_session is not None
+            else "Session active"
+        )
         self.guided_session = None
         self.session = None
-        self.show_main_menu(banner_message="Session guidee arretee avant la fin de la manche.")
+        self.show_main_menu(banner_message=f"{mode_label} arretee avant la fin de la manche.")
 
     def start_primary_goal(self):
         if self.player is not None and self.progression_snapshot is None:
@@ -727,6 +789,12 @@ class HangmanApp:
 
     def start_guided_featured_challenge_session(self):
         self._start_guided_session("featured_challenge")
+
+    def start_review_failed_words(self):
+        self._start_review_session("failed_words")
+
+    def start_review_weak_pair(self):
+        self._start_review_session("weak_pair")
 
     def start_last_selection(self):
         player = self.player
@@ -846,7 +914,7 @@ class HangmanApp:
             difficulty,
         )
 
-    def _start_round(self, *, preserve_guided_session=False):
+    def _start_round(self, *, preserve_guided_session=False, review_mode=False):
         if not preserve_guided_session:
             self.guided_session = None
 
@@ -858,9 +926,15 @@ class HangmanApp:
         if selected_display_name in self.category_labels:
             self.category_var.set(self.category_labels[selected_display_name])
 
-        self.round_exploration_before = self._build_catalog_exploration_snapshot()["selected_state"]
+        self.round_exploration_before = None if review_mode else self._build_catalog_exploration_snapshot()["selected_state"]
         try:
-            self.session = self._create_session_for_current_selection()
+            if review_mode:
+                self.session = create_review_session(
+                    self.guided_session,
+                    self.categories,
+                )
+            else:
+                self.session = self._create_session_for_current_selection()
         except ValueError as exc:
             self.round_exploration_before = None
             messagebox.showerror("Partie indisponible", str(exc))
@@ -977,10 +1051,12 @@ class HangmanApp:
             self.category_availability,
         )
         rotation_before = self.round_exploration_before
-        rotation_after = self._build_catalog_exploration_snapshot(
-            selected_category=self.session.category,
-            selected_difficulty=self.session.difficulty,
-        )["selected_state"]
+        rotation_after = None
+        if rotation_before is not None:
+            rotation_after = self._build_catalog_exploration_snapshot(
+                selected_category=self.session.category,
+                selected_difficulty=self.session.difficulty,
+            )["selected_state"]
         self.round_exploration_before = None
         self.player = outcome["player"]
         self.progress_var.set(self._build_player_summary(self.player))
@@ -990,32 +1066,47 @@ class HangmanApp:
         guided_progress = None
         guided_recommendation = None
         if self.guided_session is not None and self.guided_session.get("status") == "active":
+            session_kind = str(self.guided_session.get("session_kind") or "")
             round_record = {
                 "title": outcome["title"],
                 "result_message": outcome["result_message"],
                 "category": self.session.category,
                 "difficulty": self.session.difficulty,
+                "secret_word": self.session.secret_word,
                 "won": reason == "won",
                 "end_reason": reason,
                 "score_earned": outcome["score_earned"],
                 "completed_goals": outcome["completed_goals"],
                 "mastery_updates": outcome["mastery_updates"],
             }
+            if session_kind == "review_weak_pair":
+                round_record["qualified"] = is_review_round_qualified(
+                    self.guided_session,
+                    self.session,
+                    reason,
+                )
             self.guided_session["rounds"].append(round_record)
-            guided_progress = evaluate_guided_objective(
-                self.guided_session["objective"],
-                outcome["player"],
-                outcome["dashboard"],
-                outcome["progression_snapshot"],
-            )
-            guided_recommendation = build_guided_recommendation(
-                self.guided_session["objective"],
-                outcome["player"],
-                outcome["dashboard"],
-                outcome["progression_snapshot"],
-            )
+            if session_kind.startswith("review_"):
+                guided_progress = evaluate_review_session(self.guided_session)
+                guided_recommendation = build_review_recommendation(self.guided_session)
+            else:
+                guided_progress = evaluate_guided_objective(
+                    self.guided_session["objective"],
+                    outcome["player"],
+                    outcome["dashboard"],
+                    outcome["progression_snapshot"],
+                )
+                guided_recommendation = build_guided_recommendation(
+                    self.guided_session["objective"],
+                    outcome["player"],
+                    outcome["dashboard"],
+                    outcome["progression_snapshot"],
+                )
             self.guided_session["objective_state"] = guided_progress
             self.guided_session["recommendation"] = guided_recommendation
+            self.guided_session["resolution_status"] = (
+                guided_progress.get("resolution_status") if guided_progress is not None else None
+            )
             if guided_progress is not None and guided_progress.get("completed"):
                 self.guided_session["status"] = "completed"
                 self.show_guided_session_summary()
@@ -1030,10 +1121,14 @@ class HangmanApp:
             outcome["completed_goals"],
             outcome["mastery_updates"],
             outcome["breakdown"],
-            catalog_rotation={
-                "before": rotation_before,
-                "after": rotation_after,
-            },
+            catalog_rotation=(
+                {
+                    "before": rotation_before,
+                    "after": rotation_after,
+                }
+                if rotation_before is not None
+                else None
+            ),
             guided_progress=guided_progress,
             guided_recommendation=guided_recommendation,
         )
@@ -1074,7 +1169,7 @@ class HangmanApp:
     def return_to_menu(self):
         banner_message = ""
         if self.guided_session is not None and self.guided_session.get("status") == "active":
-            banner_message = "Session guidee arretee."
+            banner_message = f"{self.guided_session.get('mode_label', 'Session active')} arretee."
         self.guided_session = None
         self.session = None
         self.show_main_menu(banner_message=banner_message)

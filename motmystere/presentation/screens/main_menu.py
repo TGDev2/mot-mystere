@@ -326,6 +326,26 @@ class MainMenuScreen:
                 compact=True,
             )
 
+        review_options = progression.get("review_options") or {}
+        failed_words_option = review_options.get("failed_words")
+        weak_pair_option = review_options.get("weak_pair")
+        if failed_words_option is not None or weak_pair_option is not None:
+            ui.section_title(parent, "Revision ciblee")
+            if failed_words_option is not None:
+                ui.render_review_option_card(
+                    parent,
+                    failed_words_option,
+                    compact=True,
+                    command=app.start_review_failed_words,
+                )
+            if weak_pair_option is not None:
+                ui.render_review_option_card(
+                    parent,
+                    weak_pair_option,
+                    compact=True,
+                    command=app.start_review_weak_pair,
+                )
+
         ui.section_title(parent, "Defis actifs")
         ui.render_challenge_cards(parent, progression.get("challenges", ()), limit=2, compact=True)
         ui.section_title(parent, "Objectifs actifs")

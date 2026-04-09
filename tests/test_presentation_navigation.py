@@ -141,6 +141,88 @@ class PresentationNavigationTestCase(unittest.TestCase):
             ],
         )
 
+    def test_start_review_failed_words_syncs_selection_and_uses_review_mode(self):
+        app = HangmanApp.__new__(HangmanApp)
+        app.player = {"id": 7}
+        app.categories = {"animaux": ["CHAT", "LION", "OURS", "LOUP", "VACHE"]}
+        calls = []
+
+        app._load_player_from_form = lambda: app.player
+        app._get_progression_bundle = lambda: (
+            None,
+            {
+                "review_options": {
+                    "failed_words": {
+                        "kind": "failed_words",
+                        "title": "Reviser mes mots rates",
+                        "targets": (
+                            {
+                                "category": "animaux",
+                                "difficulty": "Facile",
+                                "secret_word": "CHAT",
+                                "label": "Animaux en Facile",
+                            },
+                        ),
+                    }
+                }
+            },
+        )
+        app._sync_selection_to = lambda category, difficulty: calls.append(("sync", category, difficulty))
+        app._start_round = lambda preserve_guided_session=False, review_mode=False: calls.append(
+            ("start_round", preserve_guided_session, review_mode)
+        )
+
+        app.start_review_failed_words()
+
+        self.assertEqual(app.guided_session["session_kind"], "review_failed_words")
+        self.assertEqual(
+            calls,
+            [
+                ("sync", "animaux", "Facile"),
+                ("start_round", True, True),
+            ],
+        )
+
+    def test_start_review_weak_pair_syncs_selection_and_uses_review_mode(self):
+        app = HangmanApp.__new__(HangmanApp)
+        app.player = {"id": 7}
+        app.categories = {"animaux": ["CHAT", "LION", "OURS", "LOUP", "VACHE"]}
+        calls = []
+
+        app._load_player_from_form = lambda: app.player
+        app._get_progression_bundle = lambda: (
+            None,
+            {
+                "review_options": {
+                    "weak_pair": {
+                        "kind": "weak_pair",
+                        "title": "Travailler mon reglage fragile",
+                        "driver": "time_pressure",
+                        "driver_label": "Temps",
+                        "category": "animaux",
+                        "difficulty": "Facile",
+                        "target_value": 2,
+                        "max_rounds": 3,
+                    }
+                }
+            },
+        )
+        app._sync_selection_to = lambda category, difficulty: calls.append(("sync", category, difficulty))
+        app._start_round = lambda preserve_guided_session=False, review_mode=False: calls.append(
+            ("start_round", preserve_guided_session, review_mode)
+        )
+
+        app.start_review_weak_pair()
+
+        self.assertEqual(app.guided_session["session_kind"], "review_weak_pair")
+        self.assertEqual(
+            calls,
+            [
+                ("sync", "animaux", "Facile"),
+                ("start_round", True, True),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

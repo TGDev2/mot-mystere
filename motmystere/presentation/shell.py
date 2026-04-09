@@ -176,6 +176,63 @@ class PresentationShell:
             ).pack(anchor="w", pady=(10, 0))
         return card
 
+    def render_review_option_card(
+        self,
+        parent,
+        option,
+        *,
+        compact=False,
+        command=None,
+    ):
+        if option is None:
+            return None
+
+        if option.get("kind") == "failed_words":
+            bg = "#fff7e8"
+            border = "#ebd29a"
+            accent = WARNING_COLOR
+            badge = f"Revision mots rates | {option.get('count', 0)} cible(s)"
+        else:
+            bg = "#eef6ff"
+            border = "#c8d9f1"
+            accent = ACCENT_COLOR
+            badge = f"Revision paire fragile | {option.get('driver_label', 'Diagnostic')}"
+
+        wraplength = 320 if compact else 760
+        card = self.card(parent, bg=bg, border=border, padx=14, pady=14)
+        card.pack(fill="x", pady=(6, 0))
+        self.label(
+            card,
+            text=badge,
+            bg=bg,
+            fg=accent,
+            font=("Arial", 9, "bold"),
+        ).pack(anchor="w")
+        self.label(
+            card,
+            text=option["title"],
+            bg=bg,
+            font=("Arial", 11, "bold"),
+            wraplength=wraplength,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(2, 2))
+        self.label(
+            card,
+            text=option["detail"],
+            bg=bg,
+            fg=SUBTLE_TEXT,
+            wraplength=wraplength,
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        if command is not None and option.get("cta_text"):
+            tk.Button(
+                card,
+                text=option["cta_text"],
+                command=command,
+                width=26 if compact else 28,
+            ).pack(anchor="w", pady=(10, 0))
+        return card
+
     def render_catalog_exploration_card(
         self,
         parent,
