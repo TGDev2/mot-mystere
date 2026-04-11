@@ -125,7 +125,12 @@ class CatalogScreen:
         if app.catalog_import_preview_window is not None and app.catalog_import_preview_window.winfo_exists():
             app.catalog_import_preview_window.destroy()
 
-        parent = app.catalog_window if app.catalog_window is not None and app.catalog_window.winfo_exists() else app.root
+        if app.catalog_window is not None and app.catalog_window.winfo_exists():
+            parent = app.catalog_window
+        elif app.editorial_cockpit_window is not None and app.editorial_cockpit_window.winfo_exists():
+            parent = app.editorial_cockpit_window
+        else:
+            parent = app.root
         window = tk.Toplevel(parent, bg=APP_BG)
         window.title("Verifier le pack")
         window.resizable(True, True)

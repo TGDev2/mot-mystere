@@ -3,6 +3,7 @@ import unittest
 from motmystere.game_logic import HangmanApp
 from motmystere.presentation.navigation import (
     CATALOG_OVERLAY,
+    EDITORIAL_COCKPIT_OVERLAY,
     DIFFICULTY_CALIBRATION_OVERLAY,
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
@@ -54,6 +55,7 @@ class PresentationNavigationTestCase(unittest.TestCase):
         )
         app.show_player_dashboard(7)
         app.show_leaderboard()
+        app.show_editorial_cockpit_overlay(banner_message="Priorites actualisees.")
         app.show_catalog_overlay(banner_message="Catalogue actualise.")
         app.show_difficulty_calibration_overlay()
         app.show_guided_session_summary()
@@ -87,6 +89,7 @@ class PresentationNavigationTestCase(unittest.TestCase):
                 ),
                 ("overlay", PLAYER_DASHBOARD_OVERLAY, {"player_id": 7}),
                 ("overlay", LEADERBOARD_OVERLAY, {}),
+                ("overlay", EDITORIAL_COCKPIT_OVERLAY, {"banner_message": "Priorites actualisees."}),
                 ("overlay", CATALOG_OVERLAY, {"banner_message": "Catalogue actualise."}),
                 ("overlay", DIFFICULTY_CALIBRATION_OVERLAY, {}),
                 ("screen", GUIDED_SESSION_SUMMARY_SCREEN, {}),

@@ -117,7 +117,7 @@ class MainMenuScreen:
         card.pack(fill="x", pady=(14, 0))
         ui.label(
             card,
-            text="Catalogue local",
+            text="Cockpit editorial",
             bg=bg,
             fg=fg,
             font=("Arial", 10, "bold"),
@@ -132,8 +132,8 @@ class MainMenuScreen:
         ).pack(anchor="w", fill="x", pady=(6, 0))
         tk.Button(
             card,
-            text="Gerer le catalogue",
-            command=app.show_catalog_overlay,
+            text="Ouvrir le cockpit",
+            command=app.show_editorial_cockpit_overlay,
             width=20,
         ).pack(anchor="w", pady=(10, 0))
         if issue_lines:
@@ -434,8 +434,8 @@ class MainMenuScreen:
         )
         tk.Button(
             buttons,
-            text="Pilotage difficulte",
-            command=app.show_difficulty_calibration_overlay,
+            text="Cockpit editorial",
+            command=app.show_editorial_cockpit_overlay,
             width=20,
         ).pack(side="left", padx=(0, 8))
         tk.Button(buttons, text="Quitter", command=app.close, width=12).pack(side="left")

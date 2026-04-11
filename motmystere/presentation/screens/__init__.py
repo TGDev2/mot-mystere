@@ -1,5 +1,6 @@
 from .catalog import CatalogScreen
 from .difficulty_calibration import DifficultyCalibrationScreen
+from .editorial_cockpit import EditorialCockpitScreen
 from .game_round import GameRoundScreen
 from .leaderboard import LeaderboardScreen
 from .main_menu import MainMenuScreen
@@ -9,6 +10,7 @@ from .round_summary import RoundSummaryScreen
 __all__ = [
     "CatalogScreen",
     "DifficultyCalibrationScreen",
+    "EditorialCockpitScreen",
     "GameRoundScreen",
     "LeaderboardScreen",
     "MainMenuScreen",

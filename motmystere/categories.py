@@ -47,6 +47,10 @@ class CategorySummary:
     status: str
     available_difficulties: tuple
     source_path: str
+    total_words: int = 0
+    easy_word_count: int = 0
+    medium_word_count: int = 0
+    hard_word_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -280,6 +284,10 @@ def _create_category_summary(
     status="invalid",
     available_difficulties=(),
     source_path="",
+    total_words=0,
+    easy_word_count=0,
+    medium_word_count=0,
+    hard_word_count=0,
 ):
     return CategorySummary(
         category_key=_build_category_key(pack_id, category_id),
@@ -287,6 +295,10 @@ def _create_category_summary(
         status=status,
         available_difficulties=tuple(available_difficulties),
         source_path=str(source_path),
+        total_words=int(total_words or 0),
+        easy_word_count=int(easy_word_count or 0),
+        medium_word_count=int(medium_word_count or 0),
+        hard_word_count=int(hard_word_count or 0),
     )
 
 
@@ -301,6 +313,7 @@ def _load_core_pack(base_dir, categories, display_names, issues):
         category_id = _normalize_identifier(file.stem)
         result = _read_word_list(file)
         supported = get_supported_difficulties(result.words)
+        breakdown = get_category_difficulty_breakdown(result.words)
         category_summary = _create_category_summary(
             CORE_PACK_ID,
             None,
@@ -308,6 +321,10 @@ def _load_core_pack(base_dir, categories, display_names, issues):
             status="invalid",
             available_difficulties=supported,
             source_path=file,
+            total_words=len(result.words),
+            easy_word_count=breakdown["Facile"],
+            medium_word_count=breakdown["Moyen"],
+            hard_word_count=breakdown["Difficile"],
         )
 
         if not supported:
@@ -627,6 +644,7 @@ def _load_local_pack(
 
         result = _read_word_list(source_path)
         supported = get_supported_difficulties(result.words)
+        breakdown = get_category_difficulty_breakdown(result.words)
         category_key = _build_category_key(pack_id, category_id)
         category_label = _build_display_name(
             pack_id,
@@ -652,7 +670,12 @@ def _load_local_pack(
                     category_id,
                     category_label=entry.get("label"),
                     status="invalid",
+                    available_difficulties=supported,
                     source_path=source_path,
+                    total_words=len(result.words),
+                    easy_word_count=breakdown["Facile"],
+                    medium_word_count=breakdown["Moyen"],
+                    hard_word_count=breakdown["Difficile"],
                 )
             )
             continue
@@ -674,6 +697,10 @@ def _load_local_pack(
                 status=category_status,
                 available_difficulties=tuple(supported),
                 source_path=str(source_path),
+                total_words=len(result.words),
+                easy_word_count=breakdown["Facile"],
+                medium_word_count=breakdown["Moyen"],
+                hard_word_count=breakdown["Difficile"],
             )
         )
 

@@ -12,8 +12,10 @@ from .categories import (
 )
 from .database import get_recent_players
 from .difficulty_calibration import get_difficulty_calibration_bundle
+from .editorial_cockpit import get_editorial_cockpit_bundle
 from .presentation import (
     CATALOG_OVERLAY,
+    EDITORIAL_COCKPIT_OVERLAY,
     DIFFICULTY_CALIBRATION_OVERLAY,
     GUIDED_SESSION_SUMMARY_SCREEN,
     LEADERBOARD_OVERLAY,
@@ -27,6 +29,7 @@ from .presentation import (
 from .presentation.screens import (
     CatalogScreen,
     DifficultyCalibrationScreen,
+    EditorialCockpitScreen,
     GameRoundScreen,
     LeaderboardScreen,
     MainMenuScreen,
@@ -59,7 +62,9 @@ class HangmanApp:
         self.catalog_window = None
         self.catalog_import_preview_window = None
         self.catalog_import_preview = None
+        self.catalog_import_preview_reopen_overlay = "catalog"
         self.catalog = None
+        self.editorial_cockpit_window = None
         self.categories = {}
         self.category_availability = {}
         self.category_display_names = {}
@@ -110,6 +115,7 @@ class HangmanApp:
         self.leaderboard_screen = LeaderboardScreen()
         self.catalog_screen = CatalogScreen()
         self.difficulty_calibration_screen = DifficultyCalibrationScreen()
+        self.editorial_cockpit_screen = EditorialCockpitScreen()
         self.presentation_router = self._build_presentation_router()
 
         self.show_main_menu()
@@ -173,7 +179,14 @@ class HangmanApp:
 
         return " ".join(messages)
 
-    def _reload_catalog_state(self, catalog, *, banner_message="", reopen_catalog=False):
+    def _reload_catalog_state(
+        self,
+        catalog,
+        *,
+        banner_message="",
+        reopen_catalog=False,
+        reopen_editorial=False,
+    ):
         previous_category = self.category_var.get()
         previous_difficulty = self.difficulty_var.get()
 
@@ -187,6 +200,8 @@ class HangmanApp:
         self.show_main_menu(banner_message=combined_message)
         if reopen_catalog:
             self.show_catalog_overlay(banner_message=combined_message)
+        if reopen_editorial:
+            self.show_editorial_cockpit_overlay(banner_message=combined_message)
 
         return combined_message
 
@@ -213,6 +228,10 @@ class HangmanApp:
                 ),
                 LEADERBOARD_OVERLAY: lambda: self.leaderboard_screen.render(self),
                 CATALOG_OVERLAY: lambda banner_message="": self.catalog_screen.render(
+                    self,
+                    banner_message=banner_message,
+                ),
+                EDITORIAL_COCKPIT_OVERLAY: lambda banner_message="": self.editorial_cockpit_screen.render(
                     self,
                     banner_message=banner_message,
                 ),
@@ -256,7 +275,8 @@ class HangmanApp:
         return (
             f"{len(self.categories)} categorie(s) jouables chargees. "
             f"Packs locaux : {active_local} actif(s), {disabled_local} desactive(s), {invalid_local} invalide(s). "
-            f"Importez un .zip depuis le produit, installez un pack officiel fiable, ou utilisez le dossier expert {example_manifest}."
+            "Ouvrez le cockpit editorial pour prioriser enrichissements, recalibrages et activations, puis "
+            f"utilisez au besoin le dossier expert {example_manifest}."
         )
 
     def _build_catalog_issue_lines(self, limit=3):
@@ -273,6 +293,18 @@ class HangmanApp:
             banner_message=banner_message,
         )
 
+    def get_editorial_cockpit_bundle(self):
+        return get_editorial_cockpit_bundle(
+            self.catalog,
+            catalog_service=self.catalog_service,
+        )
+
+    def show_editorial_cockpit_overlay(self, banner_message=""):
+        self.presentation_router.open_overlay(
+            EDITORIAL_COCKPIT_OVERLAY,
+            banner_message=banner_message,
+        )
+
     def get_difficulty_calibration_bundle(self):
         return get_difficulty_calibration_bundle(self.catalog)
 
@@ -286,7 +318,14 @@ class HangmanApp:
             reopen_catalog=True,
         )
 
-    def toggle_catalog_pack(self, pack_id, enabled):
+    def refresh_editorial_cockpit_overlay(self):
+        self._reload_catalog_state(
+            self.catalog_service.load_catalog(),
+            banner_message="Cockpit editorial actualise.",
+            reopen_editorial=True,
+        )
+
+    def toggle_catalog_pack(self, pack_id, enabled, *, reopen_overlay="catalog"):
         try:
             catalog, updated_pack = self.catalog_service.set_pack_enabled(pack_id, enabled)
         except CatalogServiceError as exc:
@@ -301,7 +340,8 @@ class HangmanApp:
         self._reload_catalog_state(
             catalog,
             banner_message=status_message,
-            reopen_catalog=True,
+            reopen_catalog=reopen_overlay == "catalog",
+            reopen_editorial=reopen_overlay == "editorial",
         )
 
     def _get_official_pack_library(self):
@@ -329,10 +369,10 @@ class HangmanApp:
             return
         self._preview_catalog_pack_source(selected_dir)
 
-    def preview_official_catalog_pack(self, archive_path):
-        self._preview_catalog_pack_source(archive_path)
+    def preview_official_catalog_pack(self, archive_path, *, reopen_overlay="catalog"):
+        self._preview_catalog_pack_source(archive_path, reopen_overlay=reopen_overlay)
 
-    def _preview_catalog_pack_source(self, source_path):
+    def _preview_catalog_pack_source(self, source_path, *, reopen_overlay="catalog"):
         try:
             preview = self.catalog_service.inspect_pack_source(source_path)
         except CatalogServiceError as exc:
@@ -340,6 +380,7 @@ class HangmanApp:
             return
 
         self.catalog_import_preview = preview
+        self.catalog_import_preview_reopen_overlay = reopen_overlay
         self.catalog_screen.render_import_preview_dialog(self, preview)
 
     def close_catalog_pack_preview(self):
@@ -348,6 +389,7 @@ class HangmanApp:
             preview_window.destroy()
         self.catalog_import_preview_window = None
         self.catalog_import_preview = None
+        self.catalog_import_preview_reopen_overlay = "catalog"
 
     def _build_pack_import_status_message(self, preview, pack_summary):
         parts = [f"Pack ajoute : {pack_summary.label}."]
@@ -389,11 +431,13 @@ class HangmanApp:
             return
 
         preview = self.catalog_import_preview
+        reopen_overlay = self.catalog_import_preview_reopen_overlay
         self.close_catalog_pack_preview()
         self._reload_catalog_state(
             catalog,
             banner_message=self._build_pack_import_status_message(preview, pack_summary),
-            reopen_catalog=True,
+            reopen_catalog=reopen_overlay == "catalog",
+            reopen_editorial=reopen_overlay == "editorial",
         )
 
     def import_catalog_pack(self):
