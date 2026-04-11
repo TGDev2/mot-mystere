@@ -1,18 +1,7 @@
-from datetime import datetime
-from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox
 
-from .backup_service import BackupService, BackupServiceError
-from .catalog_service import CatalogService, CatalogServiceError
-from .categories import (
-    MIN_WORD_POOL_SIZE,
-    format_category_name,
-    get_category_difficulty_breakdown,
-)
-from .database import get_recent_players
-from .difficulty_calibration import get_difficulty_calibration_bundle
-from .editorial_cockpit import get_editorial_cockpit_bundle
+from .backup_service import BackupService
+from .catalog_service import CatalogService
 from .presentation import (
     CATALOG_OVERLAY,
     EDITORIAL_COCKPIT_OVERLAY,
@@ -37,21 +26,16 @@ from .presentation.screens import (
     RoundSummaryScreen,
 )
 from .presentation.theme import APP_BG
-from .scoring import build_score_breakdown
-from .solo_game_service import (
-    build_catalog_exploration_snapshot,
-    build_guided_objective,
-    build_guided_recommendation,
-    build_review_recommendation,
-    build_review_session_state,
-    create_session_for_player,
-    create_review_session,
-    evaluate_guided_objective,
-    evaluate_review_session,
-    get_progression_bundle,
-    is_review_round_qualified,
-    prepare_player,
-    resolve_round,
+from .workflows import (
+    BackupWorkflow,
+    CatalogWorkflow,
+    GuidedSessionWorkflow,
+    PlayerProgressionSupport,
+    RoundLoopWorkflow,
+    SelectionCatalogSupport,
+    TkDialogPort,
+    TkFileDialogPort,
+    TkTimerPort,
 )
 
 
@@ -69,13 +53,35 @@ class HangmanApp:
         self.category_availability = {}
         self.category_display_names = {}
         self.category_labels = {}
-        self._set_catalog(self.catalog_service.load_catalog())
 
         self.root = tk.Tk()
         self.root.title("MotMystere")
         self.root.resizable(False, False)
         self.root.configure(bg=APP_BG)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.dialog_port = TkDialogPort()
+        self.file_dialog_port = TkFileDialogPort()
+        self.timer_port = TkTimerPort(self.root)
+
+        self.selection_support = SelectionCatalogSupport(self)
+        self.player_progression_support = PlayerProgressionSupport(self, dialog_port=self.dialog_port)
+        self.catalog_workflow = CatalogWorkflow(
+            self,
+            dialog_port=self.dialog_port,
+            file_dialog_port=self.file_dialog_port,
+        )
+        self.backup_workflow = BackupWorkflow(
+            self,
+            dialog_port=self.dialog_port,
+            file_dialog_port=self.file_dialog_port,
+        )
+        self.guided_session_workflow = GuidedSessionWorkflow(self, dialog_port=self.dialog_port)
+        self.round_loop_workflow = RoundLoopWorkflow(
+            self,
+            dialog_port=self.dialog_port,
+            timer_port=self.timer_port,
+        )
+        self._set_catalog(self.catalog_service.load_catalog())
 
         self.player = None
         self.session = None
@@ -129,8 +135,12 @@ class HangmanApp:
         self.root.destroy()
 
     def cancel_timer(self):
-        if self.timer_job is not None:
-            self.root.after_cancel(self.timer_job)
+        if getattr(self, "timer_job", None) is not None:
+            timer_port = getattr(self, "timer_port", None)
+            if timer_port is not None:
+                timer_port.cancel(self.timer_job)
+            else:
+                self.root.after_cancel(self.timer_job)
             self.timer_job = None
 
     def clear_screen(self):
@@ -143,41 +153,65 @@ class HangmanApp:
         self.difficulty_menu = None
         self.selected_exploration_mount = None
 
+    def _ensure_selection_support(self):
+        if getattr(self, "selection_support", None) is None:
+            self.selection_support = SelectionCatalogSupport(self)
+        return self.selection_support
+
+    def _ensure_player_progression_support(self):
+        if getattr(self, "player_progression_support", None) is None:
+            self.player_progression_support = PlayerProgressionSupport(
+                self,
+                dialog_port=getattr(self, "dialog_port", None),
+            )
+        return self.player_progression_support
+
+    def _ensure_catalog_workflow(self):
+        if getattr(self, "catalog_workflow", None) is None:
+            self.catalog_workflow = CatalogWorkflow(
+                self,
+                dialog_port=getattr(self, "dialog_port", None),
+                file_dialog_port=getattr(self, "file_dialog_port", None),
+            )
+        return self.catalog_workflow
+
+    def _ensure_backup_workflow(self):
+        if getattr(self, "backup_workflow", None) is None:
+            self.backup_workflow = BackupWorkflow(
+                self,
+                dialog_port=getattr(self, "dialog_port", None),
+                file_dialog_port=getattr(self, "file_dialog_port", None),
+            )
+        return self.backup_workflow
+
+    def _ensure_guided_session_workflow(self):
+        if getattr(self, "guided_session_workflow", None) is None:
+            self.guided_session_workflow = GuidedSessionWorkflow(
+                self,
+                dialog_port=getattr(self, "dialog_port", None),
+            )
+        return self.guided_session_workflow
+
+    def _ensure_round_loop_workflow(self):
+        if getattr(self, "round_loop_workflow", None) is None:
+            self.round_loop_workflow = RoundLoopWorkflow(
+                self,
+                dialog_port=getattr(self, "dialog_port", None),
+                timer_port=getattr(self, "timer_port", None),
+            )
+        return self.round_loop_workflow
+
     def _set_catalog(self, catalog):
-        self.catalog = catalog
-        self.categories = dict(catalog.categories)
-        self.category_availability = dict(catalog.category_availability)
-        self.category_display_names = dict(catalog.display_names)
-        self.category_labels = self._build_category_label_map()
-        if not self.categories:
-            raise RuntimeError("Aucune categorie exploitable n'est disponible.")
+        self._ensure_selection_support().set_catalog(catalog)
 
     def _merge_banner_messages(self, *messages):
-        return " ".join(message.strip() for message in messages if message and message.strip())
+        return self._ensure_selection_support().merge_banner_messages(*messages)
 
     def _sync_selection_after_catalog_reload(self, previous_category, previous_difficulty):
-        fallback_category = next(iter(self.categories))
-        selected_category = previous_category if previous_category in self.categories else fallback_category
-        available_difficulties = self.category_availability[selected_category]
-        selected_difficulty = (
-            previous_difficulty if previous_difficulty in available_difficulties else available_difficulties[0]
+        return self._ensure_selection_support().sync_selection_after_catalog_reload(
+            previous_category,
+            previous_difficulty,
         )
-
-        self.category_var.set(selected_category)
-        self.category_display_var.set(self._get_category_display_name(selected_category))
-        self.difficulty_var.set(selected_difficulty)
-
-        messages = []
-        if previous_category and previous_category not in self.categories:
-            messages.append(
-                "Le reglage precedent n'est plus disponible; une categorie de secours a ete selectionnee."
-            )
-        elif previous_category == selected_category and previous_difficulty not in available_difficulties:
-            messages.append(
-                "Le niveau precedent n'est plus disponible; le premier niveau jouable a ete selectionne."
-            )
-
-        return " ".join(messages)
 
     def _reload_catalog_state(
         self,
@@ -187,23 +221,12 @@ class HangmanApp:
         reopen_catalog=False,
         reopen_editorial=False,
     ):
-        previous_category = self.category_var.get()
-        previous_difficulty = self.difficulty_var.get()
-
-        self._set_catalog(catalog)
-        selection_message = self._sync_selection_after_catalog_reload(
-            previous_category,
-            previous_difficulty,
+        return self._ensure_catalog_workflow().reload_catalog_state(
+            catalog,
+            banner_message=banner_message,
+            reopen_catalog=reopen_catalog,
+            reopen_editorial=reopen_editorial,
         )
-        combined_message = self._merge_banner_messages(banner_message, selection_message)
-
-        self.show_main_menu(banner_message=combined_message)
-        if reopen_catalog:
-            self.show_catalog_overlay(banner_message=combined_message)
-        if reopen_editorial:
-            self.show_editorial_cockpit_overlay(banner_message=combined_message)
-
-        return combined_message
 
     def _build_presentation_router(self):
         return PresentationRouter(
@@ -240,52 +263,16 @@ class HangmanApp:
         )
 
     def _get_category_display_name(self, category_key):
-        return self.category_display_names.get(
-            category_key,
-            format_category_name(category_key),
-        )
+        return self._ensure_selection_support().get_category_display_name(category_key)
 
     def _build_category_label_map(self):
-        counts = {}
-        for key in self.categories:
-            label = self._get_category_display_name(key)
-            counts[label] = counts.get(label, 0) + 1
-
-        labels = {}
-        for key in self.categories:
-            label = self._get_category_display_name(key)
-            if counts[label] > 1:
-                label = f"{label} [{key}]"
-            labels[label] = key
-        return labels
+        return self._ensure_selection_support().build_category_label_map()
 
     def _build_catalog_summary(self):
-        local_packs = [
-            pack
-            for pack in self.catalog.pack_summaries
-            if pack.origin == "local"
-        ]
-        active_local = sum(1 for pack in local_packs if pack.status == "active")
-        disabled_local = sum(1 for pack in local_packs if pack.status == "disabled")
-        invalid_local = sum(1 for pack in local_packs if pack.status == "invalid")
-        if self.catalog.local_pack_dir is not None:
-            example_manifest = self.catalog.local_pack_dir / "<nom_du_pack>" / "pack.json"
-        else:
-            example_manifest = "packs/<nom_du_pack>/pack.json"
-        return (
-            f"{len(self.categories)} categorie(s) jouables chargees. "
-            f"Packs locaux : {active_local} actif(s), {disabled_local} desactive(s), {invalid_local} invalide(s). "
-            "Ouvrez le cockpit editorial pour prioriser enrichissements, recalibrages et activations, puis "
-            f"utilisez au besoin le dossier expert {example_manifest}."
-        )
+        return self._ensure_catalog_workflow().build_catalog_summary()
 
     def _build_catalog_issue_lines(self, limit=3):
-        visible_issues = list(self.catalog.issues)
-        lines = [issue.message for issue in visible_issues[:limit]]
-        remaining = max(0, len(visible_issues) - len(lines))
-        if remaining:
-            lines.append(f"{remaining} autre(s) alerte(s) catalogue a verifier.")
-        return lines
+        return self._ensure_catalog_workflow().build_catalog_issue_lines(limit=limit)
 
     def show_catalog_overlay(self, banner_message=""):
         self.presentation_router.open_overlay(
@@ -294,10 +281,7 @@ class HangmanApp:
         )
 
     def get_editorial_cockpit_bundle(self):
-        return get_editorial_cockpit_bundle(
-            self.catalog,
-            catalog_service=self.catalog_service,
-        )
+        return self._ensure_catalog_workflow().get_editorial_cockpit_bundle()
 
     def show_editorial_cockpit_overlay(self, banner_message=""):
         self.presentation_router.open_overlay(
@@ -306,329 +290,101 @@ class HangmanApp:
         )
 
     def get_difficulty_calibration_bundle(self):
-        return get_difficulty_calibration_bundle(self.catalog)
+        return self._ensure_catalog_workflow().get_difficulty_calibration_bundle()
 
     def show_difficulty_calibration_overlay(self):
         self.presentation_router.open_overlay(DIFFICULTY_CALIBRATION_OVERLAY)
 
     def refresh_catalog_overlay(self):
-        self._reload_catalog_state(
-            self.catalog_service.load_catalog(),
-            banner_message="Catalogue actualise.",
-            reopen_catalog=True,
-        )
+        self._ensure_catalog_workflow().refresh_catalog_overlay()
 
     def refresh_editorial_cockpit_overlay(self):
-        self._reload_catalog_state(
-            self.catalog_service.load_catalog(),
-            banner_message="Cockpit editorial actualise.",
-            reopen_editorial=True,
-        )
+        self._ensure_catalog_workflow().refresh_editorial_cockpit_overlay()
 
     def toggle_catalog_pack(self, pack_id, enabled, *, reopen_overlay="catalog"):
-        try:
-            catalog, updated_pack = self.catalog_service.set_pack_enabled(pack_id, enabled)
-        except CatalogServiceError as exc:
-            messagebox.showerror("Catalogue", str(exc))
-            return
-
-        status_message = (
-            f"Pack active : {updated_pack.label}."
-            if updated_pack.effective_enabled
-            else f"Pack desactive : {updated_pack.label}."
-        )
-        self._reload_catalog_state(
-            catalog,
-            banner_message=status_message,
-            reopen_catalog=reopen_overlay == "catalog",
-            reopen_editorial=reopen_overlay == "editorial",
+        self._ensure_catalog_workflow().toggle_catalog_pack(
+            pack_id,
+            enabled,
+            reopen_overlay=reopen_overlay,
         )
 
     def _get_official_pack_library(self):
-        try:
-            return self.catalog_service.list_official_packs(), ""
-        except CatalogServiceError as exc:
-            return (), str(exc)
+        return self._ensure_catalog_workflow().get_official_pack_library()
 
     def preview_catalog_pack_zip(self):
-        selected_path = filedialog.askopenfilename(
-            parent=self.catalog_window if self.catalog_window is not None else self.root,
-            title="Choisir une archive de pack",
-            filetypes=[("Archives ZIP", "*.zip"), ("Tous les fichiers", "*.*")],
-        )
-        if not selected_path:
-            return
-        self._preview_catalog_pack_source(selected_path)
+        self._ensure_catalog_workflow().preview_catalog_pack_zip()
 
     def preview_catalog_pack_directory(self):
-        selected_dir = filedialog.askdirectory(
-            parent=self.catalog_window if self.catalog_window is not None else self.root,
-            title="Choisir un dossier de pack",
-        )
-        if not selected_dir:
-            return
-        self._preview_catalog_pack_source(selected_dir)
+        self._ensure_catalog_workflow().preview_catalog_pack_directory()
 
     def preview_official_catalog_pack(self, archive_path, *, reopen_overlay="catalog"):
-        self._preview_catalog_pack_source(archive_path, reopen_overlay=reopen_overlay)
+        self._ensure_catalog_workflow().preview_official_catalog_pack(
+            archive_path,
+            reopen_overlay=reopen_overlay,
+        )
 
     def _preview_catalog_pack_source(self, source_path, *, reopen_overlay="catalog"):
-        try:
-            preview = self.catalog_service.inspect_pack_source(source_path)
-        except CatalogServiceError as exc:
-            messagebox.showerror("Catalogue", str(exc))
-            return
-
-        self.catalog_import_preview = preview
-        self.catalog_import_preview_reopen_overlay = reopen_overlay
-        self.catalog_screen.render_import_preview_dialog(self, preview)
+        self._ensure_catalog_workflow().preview_catalog_pack_source(
+            source_path,
+            reopen_overlay=reopen_overlay,
+        )
 
     def close_catalog_pack_preview(self):
-        preview_window = getattr(self, "catalog_import_preview_window", None)
-        if preview_window is not None and preview_window.winfo_exists():
-            preview_window.destroy()
-        self.catalog_import_preview_window = None
-        self.catalog_import_preview = None
-        self.catalog_import_preview_reopen_overlay = "catalog"
+        self._ensure_catalog_workflow().close_catalog_pack_preview()
 
     def _build_pack_import_status_message(self, preview, pack_summary):
-        parts = [f"Pack ajoute : {pack_summary.label}."]
-        parts.append(
-            f"{len(preview.categories_added)} categorie(s) inspectee(s), "
-            f"{len(preview.playable_after_activation)} jouable(s) apres activation."
+        return self._ensure_catalog_workflow().build_pack_import_status_message(
+            preview,
+            pack_summary,
         )
-        if pack_summary.effective_enabled:
-            parts.append(
-                f"Statut final : actif, {pack_summary.loaded_category_count} categorie(s) chargee(s) maintenant."
-            )
-        else:
-            parts.append("Statut final : installe mais desactive jusqu'a activation manuelle.")
-
-        if preview.installed_non_playable_categories:
-            sample_labels = ", ".join(
-                category.label for category in preview.installed_non_playable_categories[:3]
-            )
-            parts.append(
-                f"{len(preview.installed_non_playable_categories)} categorie(s) restent installees mais non jouables: {sample_labels}."
-            )
-        elif preview.alerts:
-            parts.append(f"{len(preview.alerts)} alerte(s) restent visibles dans le catalogue.")
-
-        return " ".join(parts)
 
     def confirm_catalog_pack_import(self, enabled):
-        if self.catalog_import_preview is None:
-            return
-
-        source_path = self.catalog_import_preview.source_path
-        try:
-            catalog, pack_summary = self.catalog_service.import_pack_from_source(
-                source_path,
-                enabled=enabled,
-            )
-        except CatalogServiceError as exc:
-            messagebox.showerror("Importer un pack", str(exc))
-            return
-
-        preview = self.catalog_import_preview
-        reopen_overlay = self.catalog_import_preview_reopen_overlay
-        self.close_catalog_pack_preview()
-        self._reload_catalog_state(
-            catalog,
-            banner_message=self._build_pack_import_status_message(preview, pack_summary),
-            reopen_catalog=reopen_overlay == "catalog",
-            reopen_editorial=reopen_overlay == "editorial",
-        )
+        self._ensure_catalog_workflow().confirm_catalog_pack_import(enabled)
 
     def import_catalog_pack(self):
-        self.preview_catalog_pack_directory()
+        self._ensure_catalog_workflow().import_catalog_pack()
 
     def export_local_data(self):
-        suggested_path = self.backup_service.build_backup_archive_path()
-        selected_path = filedialog.asksaveasfilename(
-            parent=self.root,
-            title="Sauvegarder mes donnees",
-            initialdir=str(suggested_path.parent),
-            initialfile=suggested_path.name,
-            defaultextension=".zip",
-            filetypes=[("Archives ZIP", "*.zip")],
-        )
-        if not selected_path:
-            return
-
-        try:
-            summary = self.backup_service.export_archive(selected_path)
-        except BackupServiceError as exc:
-            messagebox.showerror("Sauvegarde", str(exc))
-            return
-
-        parts = [f"Sauvegarde exportee : {Path(summary['archive_path']).name}."]
-        if summary["includes"].get("packs"):
-            parts.append("Les packs locaux sont inclus.")
-        if summary["includes"].get("catalog_state"):
-            parts.append("L'etat du catalogue est inclus.")
-        self.show_main_menu(banner_message=" ".join(parts))
+        self._ensure_backup_workflow().export_local_data()
 
     def import_local_data(self):
-        selected_path = filedialog.askopenfilename(
-            parent=self.root,
-            title="Restaurer une sauvegarde",
-            filetypes=[("Archives ZIP", "*.zip"), ("Tous les fichiers", "*.*")],
-        )
-        if not selected_path:
-            return
-
-        rescue_backup_path = None
-        if self.backup_service.has_managed_data():
-            rescue_backup_path = self.backup_service.build_backup_archive_path(
-                prefix="motmystere_pre_restore"
-            )
-            confirmed = messagebox.askyesno(
-                "Restaurer une sauvegarde",
-                (
-                    "Cette restauration remplacera completement la base locale, l'etat du catalogue "
-                    "et les packs locaux actuels. "
-                    f"Une sauvegarde de secours sera creee avant remplacement dans : {rescue_backup_path}"
-                ),
-            )
-            if not confirmed:
-                return
-
-        try:
-            summary = self.backup_service.import_archive(
-                selected_path,
-                backup_path=rescue_backup_path,
-            )
-        except BackupServiceError as exc:
-            messagebox.showerror("Restauration", str(exc))
-            return
-
-        self._apply_restored_environment(summary)
+        self._ensure_backup_workflow().import_local_data()
 
     def _clear_active_player_state(self):
-        self.player = None
-        self.player_name_var.set("")
-        self.progress_var.set("")
-        self.round_exploration_before = None
+        self._ensure_player_progression_support().clear_active_player_state()
 
     def _apply_restored_environment(self, summary):
-        self.cancel_timer()
-        self.session = None
-        self.guided_session = None
-        self.progression_snapshot = None
-        self.round_exploration_before = None
-        self.close_catalog_pack_preview()
-        if self.catalog_window is not None and self.catalog_window.winfo_exists():
-            self.catalog_window.destroy()
-        self.catalog_window = None
-
-        previous_category = self.category_var.get()
-        previous_difficulty = self.difficulty_var.get()
-        self._set_catalog(self.catalog_service.load_catalog())
-        selection_message = self._sync_selection_after_catalog_reload(
-            previous_category,
-            previous_difficulty,
-        )
-
-        restored_player_name = None
-        recent_players = self._load_recent_players()
-        if recent_players:
-            bundle = get_progression_bundle(
-                {"id": recent_players[0]["id"]},
-                self.category_availability,
-            )
-            if bundle is not None:
-                self._apply_progression_bundle(bundle, sync_recent_selection=True)
-                restored_player_name = bundle["player"]["name"]
-            else:
-                self._clear_active_player_state()
-        else:
-            self._clear_active_player_state()
-
-        messages = ["Sauvegarde restauree."]
-        if summary.get("backup_path"):
-            messages.append(
-                f"Sauvegarde de secours creee : {Path(summary['backup_path']).name}."
-            )
-        if restored_player_name:
-            messages.append(f"Profil recharge : {restored_player_name}.")
-        messages.append(selection_message)
-        self.show_main_menu(
-            banner_message=self._merge_banner_messages(*messages),
-        )
+        self._ensure_backup_workflow().apply_restored_environment(summary)
 
     def _get_progression_bundle(self):
-        if self.player is None:
-            return None, None
-
-        bundle = get_progression_bundle(self.player, self.category_availability)
-        if bundle is None:
-            return None, None
-
-        return self._apply_progression_bundle(bundle)
+        return self._ensure_player_progression_support().get_progression_bundle()
 
     def _set_active_player(self, player):
-        self.player = player
-        self.player_name_var.set(player["name"])
-        self.progress_var.set(self._build_player_summary(player))
+        self._ensure_player_progression_support().set_active_player(player)
 
     def _apply_progression_bundle(self, bundle, *, sync_recent_selection=False):
-        if bundle is None:
-            return None, None
-
-        self._set_active_player(bundle["player"])
-        dashboard = bundle["dashboard"]
-        snapshot = bundle["snapshot"]
-        self.progression_snapshot = snapshot
-
-        if sync_recent_selection:
-            self._sync_selection_from_recent_game(self._get_latest_game(dashboard))
-
-        return dashboard, snapshot
-
-    def _get_latest_game(self, dashboard):
-        recent_games = (dashboard or {}).get("recent_games") or ()
-        return recent_games[0] if recent_games else None
-
-    def _sync_selection_from_recent_game(self, recent_game):
-        if not recent_game:
-            return
-
-        self._sync_selection_to(
-            recent_game.get("category"),
-            recent_game.get("difficulty"),
+        return self._ensure_player_progression_support().apply_progression_bundle(
+            bundle,
+            sync_recent_selection=sync_recent_selection,
         )
 
+    def _get_latest_game(self, dashboard):
+        return self._ensure_player_progression_support().get_latest_game(dashboard)
+
+    def _sync_selection_from_recent_game(self, recent_game):
+        self._ensure_player_progression_support().sync_selection_from_recent_game(recent_game)
+
     def _load_recent_players(self):
-        return get_recent_players()
+        return self._ensure_player_progression_support().load_recent_players()
 
     def _select_recent_player(self, player_id):
-        bundle = get_progression_bundle({"id": player_id}, self.category_availability)
-        if bundle is None:
-            messagebox.showerror("Profil", "Le profil demande est introuvable.")
-            return
-
-        self._apply_progression_bundle(bundle, sync_recent_selection=True)
-        self.show_main_menu(banner_message=f"Profil recharge : {self.player['name']}.")
+        self._ensure_player_progression_support().select_recent_player(player_id)
 
     def _sync_selection_from_goal(self, goal):
-        if not goal:
-            return
-
-        self._sync_selection_to(goal.get("category"), goal.get("difficulty"))
+        self._ensure_selection_support().sync_selection_from_goal(goal)
 
     def _sync_selection_to(self, category, difficulty):
-        if category in self.categories:
-            self.category_var.set(category)
-            self.category_display_var.set(self._get_category_display_name(category))
-
-        self.refresh_difficulty_options()
-        available_difficulties = self.get_available_difficulties(self.category_var.get())
-        if difficulty in available_difficulties:
-            self.difficulty_var.set(difficulty)
-        elif available_difficulties:
-            self.difficulty_var.set(available_difficulties[0])
-        self.update_category_hint()
+        self._ensure_selection_support().sync_selection_to(category, difficulty)
 
     def _build_catalog_exploration_snapshot(
         self,
@@ -636,197 +392,45 @@ class HangmanApp:
         selected_category=None,
         selected_difficulty=None,
     ):
-        player_id = self.player["id"] if self.player is not None else None
-        return build_catalog_exploration_snapshot(
-            player_id,
-            self.categories,
-            self.category_availability,
-            self.category_display_names,
-            selected_category=selected_category or self.category_var.get(),
-            selected_difficulty=selected_difficulty or self.difficulty_var.get(),
+        return self._ensure_selection_support().build_catalog_exploration_snapshot(
+            selected_category=selected_category,
+            selected_difficulty=selected_difficulty,
         )
 
     def _render_selected_exploration_state(self):
-        if self.selected_exploration_mount is None:
-            return
-
-        for widget in self.selected_exploration_mount.winfo_children():
-            widget.destroy()
-
-        snapshot = self._build_catalog_exploration_snapshot()
-        self.ui.render_catalog_exploration_card(
-            self.selected_exploration_mount,
-            snapshot["selected_state"],
-            title="Etat d'exploration",
-            empty_message=snapshot["empty_message"],
-            tracked=snapshot["tracked"],
-        )
+        self._ensure_selection_support().render_selected_exploration_state()
 
     def _build_guided_session_state(self, objective, dashboard, snapshot, *, source):
-        objective_state = evaluate_guided_objective(
-            objective,
-            self.player,
-            dashboard,
-            snapshot,
-        )
-        recommendation = build_guided_recommendation(
-            objective,
-            self.player,
-            dashboard,
-            snapshot,
-        )
-        return {
-            "session_kind": "guided_goal" if source == "primary_goal" else "guided_challenge",
-            "mode_label": "Session guidee",
-            "objective": objective,
-            "objective_state": objective_state,
-            "initial_progress_text": objective_state["progress_text"],
-            "rounds": [],
-            "recommendation": recommendation,
-            "status": "active",
-            "started_at": datetime.now().isoformat(timespec="seconds"),
-            "resolution_status": None,
-            "max_rounds": None,
-            "targets": (),
-        }
-
-    def _start_guided_session(self, source):
-        player = self._load_player_from_form()
-        if player is None:
-            return
-
-        dashboard, snapshot = self._get_progression_bundle()
-        objective = build_guided_objective(snapshot, source=source)
-        if objective is None:
-            messagebox.showinfo(
-                "Session guidee",
-                "Aucun objectif concret n'est disponible pour lancer une session guidee.",
-            )
-            return
-
-        guided_session = self._build_guided_session_state(
+        return self._ensure_guided_session_workflow().build_guided_session_state(
             objective,
             dashboard,
             snapshot,
             source=source,
         )
-        recommendation = guided_session.get("recommendation")
-        if recommendation is None or not recommendation.get("category") or not recommendation.get("difficulty"):
-            messagebox.showinfo(
-                "Session guidee",
-                "La recommandation suivante n'est pas exploitable pour le moment.",
-            )
-            return
 
-        self.guided_session = guided_session
-        self._sync_selection_to(
-            recommendation.get("category"),
-            recommendation.get("difficulty"),
-        )
-        self._start_round(preserve_guided_session=True)
+    def _start_guided_session(self, source):
+        self._ensure_guided_session_workflow().start_guided_session(source)
 
     def _start_review_session(self, review_key):
-        player = self._load_player_from_form()
-        if player is None:
-            return
-
-        _dashboard, snapshot = self._get_progression_bundle()
-        review_options = (snapshot or {}).get("review_options") or {}
-        review_option = review_options.get(review_key)
-        if review_option is None:
-            messagebox.showinfo(
-                "Revision ciblee",
-                "Aucune session de revision exploitable n'est disponible pour le moment.",
-            )
-            return
-
-        review_session = build_review_session_state(review_option, self.categories)
-        if review_session is None:
-            messagebox.showinfo(
-                "Revision ciblee",
-                "Les cibles de revision ne sont plus jouables avec le catalogue actif.",
-            )
-            return
-
-        recommendation = review_session.get("recommendation")
-        if recommendation is None or not recommendation.get("category") or not recommendation.get("difficulty"):
-            messagebox.showinfo(
-                "Revision ciblee",
-                "La revision ne peut pas demarrer sur une cible jouable.",
-            )
-            return
-
-        self.guided_session = review_session
-        self._sync_selection_to(
-            recommendation.get("category"),
-            recommendation.get("difficulty"),
-        )
-        self._start_round(preserve_guided_session=True, review_mode=True)
+        self._ensure_guided_session_workflow().start_review_session(review_key)
 
     def _continue_guided_session(self):
-        if self.guided_session is None or self.guided_session.get("status") != "active":
-            self.show_main_menu()
-            return
-
-        recommendation = self.guided_session.get("recommendation")
-        if recommendation is None or not recommendation.get("category") or not recommendation.get("difficulty"):
-            self.show_guided_session_summary()
-            return
-
-        self._sync_selection_to(
-            recommendation.get("category"),
-            recommendation.get("difficulty"),
-        )
-        review_mode = str(self.guided_session.get("session_kind") or "").startswith("review_")
-        if review_mode:
-            self._start_round(preserve_guided_session=True, review_mode=True)
-            return
-        self.replay_current_selection(preserve_guided_session=True)
+        self._ensure_guided_session_workflow().continue_guided_session()
 
     def _stop_guided_session_after_round(self):
-        if self.guided_session is None:
-            self.show_main_menu()
-            return
-
-        self.guided_session["status"] = "stopped"
-        self.show_guided_session_summary()
+        self._ensure_guided_session_workflow().stop_guided_session_after_round()
 
     def stop_guided_session_from_game(self):
-        mode_label = (
-            self.guided_session.get("mode_label", "Session active")
-            if self.guided_session is not None
-            else "Session active"
-        )
-        self.guided_session = None
-        self.session = None
-        self.show_main_menu(banner_message=f"{mode_label} arretee avant la fin de la manche.")
+        self._ensure_guided_session_workflow().stop_guided_session_from_game()
 
     def start_primary_goal(self):
-        if self.player is not None and self.progression_snapshot is None:
-            _, self.progression_snapshot = self._get_progression_bundle()
-
-        if self.progression_snapshot and self.progression_snapshot.get("primary_goal"):
-            self._sync_selection_from_goal(self.progression_snapshot["primary_goal"])
-
-        self.start_game()
+        self._ensure_guided_session_workflow().start_primary_goal()
 
     def start_featured_challenge(self):
-        if self.player is not None and self.progression_snapshot is None:
-            _, self.progression_snapshot = self._get_progression_bundle()
-
-        if self.progression_snapshot and self.progression_snapshot.get("featured_challenge"):
-            self._sync_selection_from_goal(self.progression_snapshot["featured_challenge"])
-
-        self.start_game()
+        self._ensure_guided_session_workflow().start_featured_challenge()
 
     def start_personalized_recommendation(self):
-        if self.player is not None:
-            _, self.progression_snapshot = self._get_progression_bundle()
-
-        if self.progression_snapshot and self.progression_snapshot.get("personalized_recommendation"):
-            self._sync_selection_from_goal(self.progression_snapshot["personalized_recommendation"])
-
-        self.start_game()
+        self._ensure_guided_session_workflow().start_personalized_recommendation()
 
     def start_guided_primary_goal_session(self):
         self._start_guided_session("primary_goal")
@@ -841,24 +445,7 @@ class HangmanApp:
         self._start_review_session("weak_pair")
 
     def start_last_selection(self):
-        player = self.player
-        dashboard = None
-
-        if player is None:
-            player = self._load_player_from_form(sync_recent_selection=True)
-            if player is None:
-                return
-        else:
-            dashboard, _ = self._get_progression_bundle()
-            self._sync_selection_from_recent_game(self._get_latest_game(dashboard))
-
-        if dashboard is None:
-            dashboard, _ = self._get_progression_bundle()
-        if self._get_latest_game(dashboard) is None:
-            self.start_game()
-            return
-
-        self.start_game()
+        self._ensure_round_loop_workflow().start_last_selection()
 
     def show_main_menu(self, banner_message=""):
         self.presentation_router.show_screen(
@@ -879,61 +466,18 @@ class HangmanApp:
         self.update_category_hint()
 
     def get_available_difficulties(self, category_key=None):
-        key = category_key or self.category_var.get()
-        return self.category_availability.get(key, tuple())
+        return self._ensure_selection_support().get_available_difficulties(category_key)
 
     def refresh_difficulty_options(self):
-        available_difficulties = self.get_available_difficulties(self.category_var.get())
-        if not available_difficulties:
-            raise RuntimeError("La categorie selectionnee ne propose aucun niveau exploitable.")
-
-        if self.difficulty_var.get() not in available_difficulties:
-            self.difficulty_var.set(available_difficulties[0])
-
-        if self.difficulty_menu is None:
-            return
-
-        menu = self.difficulty_menu["menu"]
-        menu.delete(0, "end")
-        for difficulty in available_difficulties:
-            menu.add_command(
-                label=difficulty,
-                command=tk._setit(self.difficulty_var, difficulty, self.on_difficulty_selected),
-            )
+        self._ensure_selection_support().refresh_difficulty_options()
 
     def update_category_hint(self):
-        selected_display_name = self.category_display_var.get()
-        if selected_display_name in self.category_labels:
-            self.category_var.set(self.category_labels[selected_display_name])
-
-        breakdown = get_category_difficulty_breakdown(self.categories[self.category_var.get()])
-        available_difficulties = self.get_available_difficulties(self.category_var.get())
-        selected_difficulty = self.difficulty_var.get()
-        total_words = sum(breakdown.values())
-        selected_pool = breakdown.get(selected_difficulty, 0)
-        available_text = ", ".join(available_difficulties)
-        self.category_hint_var.set(
-            f"{self._get_category_display_name(self.category_var.get())} propose {total_words} mots au total. "
-            f"Le niveau {selected_difficulty} active un pool calibre de {selected_pool} mot(s). "
-            f"Niveaux jouables : {available_text} "
-            f"(minimum garanti : {MIN_WORD_POOL_SIZE}, pool solide vise : 15 mots par niveau)."
-        )
-        self._render_selected_exploration_state()
+        self._ensure_selection_support().update_category_hint()
 
     def _load_player_from_form(self, *, sync_recent_selection=False):
-        try:
-            player = prepare_player(self.player_name_var.get())
-        except ValueError as exc:
-            messagebox.showerror("Pseudo invalide", str(exc))
-            return None
-
-        bundle = get_progression_bundle(player, self.category_availability)
-        if bundle is None:
-            self._set_active_player(player)
-            return player
-
-        self._apply_progression_bundle(bundle, sync_recent_selection=sync_recent_selection)
-        return self.player
+        return self._ensure_player_progression_support().load_player_from_form(
+            sync_recent_selection=sync_recent_selection,
+        )
 
     def open_player_dashboard(self):
         if self.player_name_var.get().strip():
@@ -941,7 +485,7 @@ class HangmanApp:
             if player is None:
                 return
         elif self.player is None:
-            messagebox.showinfo("Profil", "Saisissez un pseudo pour afficher un profil.")
+            self.dialog_port.show_info("Profil", "Saisissez un pseudo pour afficher un profil.")
             return
         else:
             player = self.player
@@ -949,233 +493,42 @@ class HangmanApp:
         self.show_player_dashboard(player["id"])
 
     def _create_session_for_current_selection(self):
-        category = self.category_var.get()
-        difficulty = self.difficulty_var.get()
-        return create_session_for_player(
-            self.player["id"],
-            self.categories,
-            category,
-            difficulty,
-        )
+        return self._ensure_round_loop_workflow().create_session_for_current_selection()
 
     def _start_round(self, *, preserve_guided_session=False, review_mode=False):
-        if not preserve_guided_session:
-            self.guided_session = None
-
-        player = self._load_player_from_form()
-        if player is None:
-            return
-
-        selected_display_name = self.category_display_var.get()
-        if selected_display_name in self.category_labels:
-            self.category_var.set(self.category_labels[selected_display_name])
-
-        self.round_exploration_before = None if review_mode else self._build_catalog_exploration_snapshot()["selected_state"]
-        try:
-            if review_mode:
-                self.session = create_review_session(
-                    self.guided_session,
-                    self.categories,
-                )
-            else:
-                self.session = self._create_session_for_current_selection()
-        except ValueError as exc:
-            self.round_exploration_before = None
-            messagebox.showerror("Partie indisponible", str(exc))
-            self.refresh_difficulty_options()
-            self.update_category_hint()
-            return
-
-        self.show_game_screen()
+        self._ensure_round_loop_workflow().start_round(
+            preserve_guided_session=preserve_guided_session,
+            review_mode=review_mode,
+        )
 
     def start_game(self):
-        self._start_round()
+        self._ensure_round_loop_workflow().start_game()
 
     def replay_current_selection(self, *, preserve_guided_session=False):
-        if self.player is None:
-            self.show_main_menu()
-            return
-
-        if not preserve_guided_session:
-            self.guided_session = None
-
-        try:
-            self.session = self._create_session_for_current_selection()
-        except ValueError as exc:
-            self.show_main_menu(banner_message=str(exc))
-            return
-
-        self.show_game_screen()
+        self._ensure_round_loop_workflow().replay_current_selection(
+            preserve_guided_session=preserve_guided_session,
+        )
 
     def show_game_screen(self):
         self.presentation_router.show_screen(ROUND_SCREEN)
 
     def on_game_keypress(self, event):
-        if self.session is None or self.session.status != "in_progress":
-            return
-
-        focused_widget = self.root.focus_get()
-        if focused_widget is not None and focused_widget.winfo_toplevel() is not self.root:
-            return
-
-        if event.keysym == "Escape":
-            if self.guided_session is not None and self.guided_session.get("status") == "active":
-                self.stop_guided_session_from_game()
-            else:
-                self.return_to_menu()
-            return
-
-        letter = str(event.char or "").strip().upper()
-        if len(letter) == 1 and letter.isalpha():
-            self.handle_letter(letter)
+        self._ensure_round_loop_workflow().on_game_keypress(event)
 
     def refresh_game_view(self):
-        self.word_var.set(self.session.revealed_word)
-        tried_letters = ", ".join(self.session.letters_tried) or "Aucune"
-        self.tried_letters_var.set(f"Lettres proposees : {tried_letters}")
-        self.attempts_var.set(str(self.session.attempts_left))
-        self.timer_var.set(f"{self.session.time_remaining} s")
-
-        potential_score = build_score_breakdown(
-            self.session.difficulty,
-            self.session.word_profile.length,
-            self.session.attempts_left,
-            self.session.time_remaining,
-            word_complexity=self.session.word_complexity,
-            time_limit=self.session.time_limit,
-        )["total"]
-        self.score_hint_var.set(f"{potential_score} pts")
-        self.progress_var.set(self._build_player_summary(self.player))
+        self._ensure_round_loop_workflow().refresh_game_view()
 
     def schedule_timer(self):
-        self.cancel_timer()
-        self.timer_job = self.root.after(1000, self.on_timer_tick)
+        self._ensure_round_loop_workflow().schedule_timer()
 
     def on_timer_tick(self):
-        status = self.session.tick()
-        self.refresh_game_view()
-        if status == "in_progress":
-            self.schedule_timer()
-            return
-
-        self.finish_round("time")
+        self._ensure_round_loop_workflow().on_timer_tick()
 
     def handle_letter(self, letter):
-        result = self.session.guess(letter)
-        if not result.was_valid:
-            self.status_var.set("Veuillez choisir une lettre valide.")
-            return
-
-        if result.letter in self.letter_buttons:
-            self.letter_buttons[result.letter].config(state=tk.DISABLED)
-
-        if result.already_guessed:
-            self.status_var.set(f"La lettre {result.letter} a deja ete proposee.")
-        elif result.correct:
-            self.status_var.set(f"Bonne reponse : {result.letter} est dans le mot.")
-        else:
-            self.status_var.set(f"{result.letter} n'est pas dans le mot.")
-
-        self.refresh_game_view()
-
-        if result.status == "won":
-            self.finish_round("won")
-        elif result.status == "lost":
-            self.finish_round("attempts")
+        self._ensure_round_loop_workflow().handle_letter(letter)
 
     def finish_round(self, reason):
-        self.cancel_timer()
-        for button in self.letter_buttons.values():
-            button.config(state=tk.DISABLED)
-
-        outcome = resolve_round(
-            self.player,
-            self.session,
-            reason,
-            self.category_availability,
-        )
-        rotation_before = self.round_exploration_before
-        rotation_after = None
-        if rotation_before is not None:
-            rotation_after = self._build_catalog_exploration_snapshot(
-                selected_category=self.session.category,
-                selected_difficulty=self.session.difficulty,
-            )["selected_state"]
-        self.round_exploration_before = None
-        self.player = outcome["player"]
-        self.progress_var.set(self._build_player_summary(self.player))
-        if outcome["progression_snapshot"] is not None:
-            self.progression_snapshot = outcome["progression_snapshot"]
-
-        guided_progress = None
-        guided_recommendation = None
-        if self.guided_session is not None and self.guided_session.get("status") == "active":
-            session_kind = str(self.guided_session.get("session_kind") or "")
-            round_record = {
-                "title": outcome["title"],
-                "result_message": outcome["result_message"],
-                "category": self.session.category,
-                "difficulty": self.session.difficulty,
-                "secret_word": self.session.secret_word,
-                "won": reason == "won",
-                "end_reason": reason,
-                "score_earned": outcome["score_earned"],
-                "completed_goals": outcome["completed_goals"],
-                "mastery_updates": outcome["mastery_updates"],
-            }
-            if session_kind == "review_weak_pair":
-                round_record["qualified"] = is_review_round_qualified(
-                    self.guided_session,
-                    self.session,
-                    reason,
-                )
-            self.guided_session["rounds"].append(round_record)
-            if session_kind.startswith("review_"):
-                guided_progress = evaluate_review_session(self.guided_session)
-                guided_recommendation = build_review_recommendation(self.guided_session)
-            else:
-                guided_progress = evaluate_guided_objective(
-                    self.guided_session["objective"],
-                    outcome["player"],
-                    outcome["dashboard"],
-                    outcome["progression_snapshot"],
-                )
-                guided_recommendation = build_guided_recommendation(
-                    self.guided_session["objective"],
-                    outcome["player"],
-                    outcome["dashboard"],
-                    outcome["progression_snapshot"],
-                )
-            self.guided_session["objective_state"] = guided_progress
-            self.guided_session["recommendation"] = guided_recommendation
-            self.guided_session["resolution_status"] = (
-                guided_progress.get("resolution_status") if guided_progress is not None else None
-            )
-            if guided_progress is not None and guided_progress.get("completed"):
-                self.guided_session["status"] = "completed"
-                self.show_guided_session_summary()
-                return
-
-        self.show_round_summary(
-            outcome["title"],
-            outcome["result_message"],
-            outcome["score_summary"],
-            outcome["score_earned"],
-            outcome["progression_snapshot"],
-            outcome["completed_goals"],
-            outcome["mastery_updates"],
-            outcome["breakdown"],
-            catalog_rotation=(
-                {
-                    "before": rotation_before,
-                    "after": rotation_after,
-                }
-                if rotation_before is not None
-                else None
-            ),
-            guided_progress=guided_progress,
-            guided_recommendation=guided_recommendation,
-        )
+        self._ensure_round_loop_workflow().finish_round(reason)
 
     def show_round_summary(
         self,
@@ -1211,12 +564,7 @@ class HangmanApp:
         self.presentation_router.show_screen(GUIDED_SESSION_SUMMARY_SCREEN)
 
     def return_to_menu(self):
-        banner_message = ""
-        if self.guided_session is not None and self.guided_session.get("status") == "active":
-            banner_message = f"{self.guided_session.get('mode_label', 'Session active')} arretee."
-        self.guided_session = None
-        self.session = None
-        self.show_main_menu(banner_message=banner_message)
+        self._ensure_round_loop_workflow().return_to_menu()
 
     def show_player_dashboard(self, player_id):
         self.presentation_router.open_overlay(
@@ -1228,10 +576,4 @@ class HangmanApp:
         self.presentation_router.open_overlay(LEADERBOARD_OVERLAY)
 
     def _build_player_summary(self, player):
-        return (
-            f"Progression de {player['name']} : "
-            f"{player['score_total']} pts au total, "
-            f"meilleur score {player['best_score']}, "
-            f"{player['games_won']} victoire(s) sur {player['games_played']} partie(s), "
-            f"taux {player['win_rate']} %."
-        )
+        return self._ensure_player_progression_support().build_player_summary(player)

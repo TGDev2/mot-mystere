@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from motmystere.game_logic import HangmanApp
+from motmystere.workflows.backup import BackupWorkflow
 
 
 class StubVar:
@@ -37,6 +38,7 @@ class StubCatalogService:
 class BackupGameLogicTestCase(unittest.TestCase):
     def test_apply_restored_environment_resets_runtime_state_and_rehydrates_recent_player(self):
         app = HangmanApp.__new__(HangmanApp)
+        workflow = BackupWorkflow(app)
         app.session = object()
         app.guided_session = {"status": "active"}
         app.progression_snapshot = {"primary_goal": {"key": "old"}}
@@ -63,10 +65,10 @@ class BackupGameLogicTestCase(unittest.TestCase):
         app.show_main_menu = lambda banner_message="": calls.append(("show_main_menu", banner_message))
 
         with patch(
-            "motmystere.game_logic.get_progression_bundle",
+            "motmystere.workflows.backup.get_progression_bundle",
             return_value={"player": {"name": "Alice"}, "dashboard": {}, "snapshot": {}},
         ):
-            app._apply_restored_environment(
+            workflow.apply_restored_environment(
                 {"backup_path": "C:/tmp/rescue.zip", "includes": {"database": True}}
             )
 

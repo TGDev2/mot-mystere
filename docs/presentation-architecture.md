@@ -2,11 +2,12 @@
 
 ## Objectif
 
-La couche presentation est decoupee pour isoler trois responsabilites:
+La couche presentation est decoupee pour isoler quatre responsabilites:
 
-- `motmystere/game_logic.py` orchestre l'etat applicatif, la navigation et les transitions de manche.
+- `motmystere/game_logic.py` compose l'application et expose une facade stable aux ecrans.
 - `motmystere/presentation/navigation.py` formalise les routes d'ecran et d'overlay, avec un routeur testable.
 - `motmystere/presentation/screens/` contient un module par ecran cle ou overlay.
+- `motmystere/workflows/` porte les workflows applicatifs par responsabilite.
 
 ## Decoupage
 
@@ -14,11 +15,30 @@ La couche presentation est decoupee pour isoler trois responsabilites:
 
 `HangmanApp` conserve:
 
-- l'etat durable de l'application (`player`, `session`, `guided_session`);
-- les actions utilisateur qui modifient cet etat (`start_game`, `finish_round`, `return_to_menu`);
-- les integrations avec les services (`prepare_player`, `resolve_round`, `get_progression_bundle`).
+- le bootstrap Tkinter, les `StringVar` et les references d'ecrans/overlays ;
+- le routeur de presentation ;
+- la facade publique appelee par les ecrans (`start_game`, `finish_round`, `return_to_menu`, `show_catalog_overlay`, etc.).
 
-Il ne construit plus directement les ecrans.
+Il ne porte plus directement la logique complete des workflows catalogue, backup, manche et session guidee.
+
+### Workflows applicatifs
+
+`motmystere/workflows/` regroupe les flux majeurs:
+
+- `catalog.py` : reload du catalogue, preview/import de packs, toggles et bundles editoriaux.
+- `backup.py` : export/import de sauvegarde et rehydratation de l'environnement apres restauration.
+- `round_loop.py` : creation de manche, saisie, timer, resolution et routage de fin de manche.
+- `guided_session.py` : demarrage, continuation, cloture et evaluation des sessions guidees/revisions.
+
+Deux supports transverses restent internes a cette couche:
+
+- `selection_support.py` : selection categorie/difficulte, sync apres reload et snapshots d'exploration.
+- `player_progression_support.py` : chargement joueur, progression, recent players et resume profil.
+
+Les appels side-effect UI sont encapsules par `ports.py` pour isoler:
+
+- dialogues et selecteurs de fichiers ;
+- timer Tkinter.
 
 ### Shell UI partage
 
@@ -69,4 +89,5 @@ Ce contrat est verifie automatiquement dans [tests/test_presentation_navigation.
 
 - Faire evoluer un ecran cible ne demande plus de retoucher le layout des autres.
 - La navigation est observable et testable sans lancer toute l'interface Tkinter.
+- Faire evoluer un workflow majeur n'impose plus de concentrer les changements dans `game_logic.py`.
 - Les composants visuels partages restent dans un point unique, ce qui limite les regressions de style et de structure.

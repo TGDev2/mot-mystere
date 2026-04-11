@@ -6,6 +6,7 @@ import uuid
 
 from motmystere.game_logic import HangmanApp
 from motmystere.categories import load_category_catalog
+from motmystere.workflows.catalog import CatalogWorkflow
 
 
 FULL_SPECTRUM_WORDS = [
@@ -96,12 +97,13 @@ class CatalogGameLogicTestCase(unittest.TestCase):
         app.difficulty_var = StubVar("Facile")
         app.category_display_names = {}
         app.category_labels = {}
+        workflow = CatalogWorkflow(app)
 
         calls = []
         app.show_main_menu = lambda banner_message="": calls.append(("menu", banner_message))
         app.show_catalog_overlay = lambda banner_message="": calls.append(("catalog", banner_message))
 
-        banner_message = app._reload_catalog_state(
+        banner_message = workflow.reload_catalog_state(
             disabled_catalog,
             banner_message="Pack desactive : Pack Bonus.",
             reopen_catalog=True,
@@ -152,12 +154,13 @@ class CatalogGameLogicTestCase(unittest.TestCase):
         app.difficulty_var = StubVar("Facile")
         app.category_display_names = {}
         app.category_labels = {}
+        workflow = CatalogWorkflow(app)
 
         calls = []
         app.show_main_menu = lambda banner_message="": calls.append(("menu", banner_message))
         app.show_catalog_overlay = lambda banner_message="": calls.append(("catalog", banner_message))
 
-        banner_message = app._reload_catalog_state(
+        banner_message = workflow.reload_catalog_state(
             updated_catalog,
             banner_message="Pack ajoute : Pack Bonus.",
             reopen_catalog=True,
