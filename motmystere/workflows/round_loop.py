@@ -196,6 +196,13 @@ class RoundLoopWorkflow:
         if guided_payload["completed"]:
             return
 
+        surface_action_plan = self.app._build_surface_action_plan(
+            outcome["dashboard"],
+            outcome["progression_snapshot"],
+            surface="round_summary",
+            round_result=reason,
+        )
+
         self.app.show_round_summary(
             outcome["title"],
             outcome["result_message"],
@@ -215,6 +222,7 @@ class RoundLoopWorkflow:
             ),
             guided_progress=guided_payload["guided_progress"],
             guided_recommendation=guided_payload["guided_recommendation"],
+            surface_action_plan=surface_action_plan,
         )
 
     def return_to_menu(self):

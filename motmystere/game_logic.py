@@ -1,5 +1,6 @@
 import tkinter as tk
 
+from .action_priority import build_surface_action_plan
 from .backup_service import BackupService
 from .catalog_service import CatalogService
 from .presentation import (
@@ -274,6 +275,35 @@ class HangmanApp:
     def _build_catalog_issue_lines(self, limit=3):
         return self._ensure_catalog_workflow().build_catalog_issue_lines(limit=limit)
 
+    def _build_surface_action_plan(self, dashboard, snapshot, *, surface, round_result=None):
+        return build_surface_action_plan(
+            dashboard,
+            snapshot,
+            surface=surface,
+            round_result=round_result,
+        )
+
+    def _get_action_callback(self, callback_id):
+        callback_map = {
+            "start_game": self.start_game,
+            "start_last_selection": self.start_last_selection,
+            "start_personalized_recommendation": self.start_personalized_recommendation,
+            "start_review_failed_words": self.start_review_failed_words,
+            "start_review_weak_pair": self.start_review_weak_pair,
+            "start_guided_primary_goal_session": self.start_guided_primary_goal_session,
+            "start_guided_featured_challenge_session": self.start_guided_featured_challenge_session,
+            "replay_current_selection": self.replay_current_selection,
+            "return_to_menu": self.return_to_menu,
+            "open_player_dashboard": self.open_player_dashboard,
+            "show_leaderboard": self.show_leaderboard,
+            "show_editorial_cockpit_overlay": self.show_editorial_cockpit_overlay,
+            "export_local_data": self.export_local_data,
+            "import_local_data": self.import_local_data,
+            "continue_guided_session": self._continue_guided_session,
+            "stop_guided_session_after_round": self._stop_guided_session_after_round,
+        }
+        return callback_map[callback_id]
+
     def show_catalog_overlay(self, banner_message=""):
         self.presentation_router.open_overlay(
             CATALOG_OVERLAY,
@@ -454,7 +484,15 @@ class HangmanApp:
         )
 
     def on_main_menu_return(self, _event):
-        self.start_game()
+        dashboard, snapshot = self._get_progression_bundle() if self.player is not None else (None, None)
+        action_plan = self._build_surface_action_plan(
+            dashboard,
+            snapshot,
+            surface="home",
+        )
+        primary_action = action_plan.get("primary_action") if action_plan is not None else None
+        callback_id = primary_action.get("callback_id") if primary_action is not None else "start_game"
+        self._get_action_callback(callback_id)()
 
     def on_category_selected(self, selected_display_name):
         if selected_display_name in self.category_labels:
@@ -544,6 +582,7 @@ class HangmanApp:
         catalog_rotation=None,
         guided_progress=None,
         guided_recommendation=None,
+        surface_action_plan=None,
     ):
         self.presentation_router.show_screen(
             ROUND_SUMMARY_SCREEN,
@@ -558,6 +597,7 @@ class HangmanApp:
             catalog_rotation=catalog_rotation,
             guided_progress=guided_progress,
             guided_recommendation=guided_recommendation,
+            surface_action_plan=surface_action_plan,
         )
 
     def show_guided_session_summary(self):

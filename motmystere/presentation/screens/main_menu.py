@@ -12,9 +12,6 @@ from ..theme import (
     SUBTLE_TEXT,
     SUCCESS_BG,
     SUCCESS_COLOR,
-    TEXT_COLOR,
-    WARNING_BG,
-    WARNING_COLOR,
 )
 
 
@@ -26,6 +23,11 @@ class MainMenuScreen:
         recent_players = app._load_recent_players()
         dashboard, progression = app._get_progression_bundle() if app.player is not None else (None, None)
         exploration_snapshot = app._build_catalog_exploration_snapshot()
+        action_plan = app._build_surface_action_plan(
+            dashboard,
+            progression,
+            surface="home",
+        )
         ui = app.ui
 
         container = ui.frame(app.root, bg=APP_BG, padx=24, pady=24)
@@ -78,104 +80,22 @@ class MainMenuScreen:
 
         self._render_recent_players_section(app, left, recent_players)
         self._render_menu_form(app, left)
+        self._render_priority_panel(app, right, action_plan)
 
         if progression is not None:
-            mastery = progression["mastery"]
-            self._render_resume_panel(app, right, dashboard, progression)
-            ui.section_title(right, "Carte de maitrise")
-            ui.label(
-                right,
-                text=(
-                    f"Maitrise globale : {mastery['mastery_percent']} %. "
-                    f"{mastery['mastered_pairs']}/{mastery['total_pairs']} paires maitrisees, "
-                    f"{mastery['pairs_left_to_master']} restantes."
-                ),
-                fg=ACCENT_COLOR,
-                wraplength=330,
-                justify="left",
-            ).pack(anchor="w", fill="x", pady=(0, 8))
-            ui.section_title(right, "Exploration du catalogue")
-            ui.render_catalog_exploration_grid(right, exploration_snapshot["grid"], compact=True)
+            self._render_player_context(app, right, dashboard, progression, exploration_snapshot)
         else:
             self._render_onboarding_panel(app, right, exploration_snapshot)
 
-        self._render_main_menu_actions(app, container, dashboard, progression)
+        self._render_utility_zone(app, container, action_plan)
+
+        footer = ui.frame(container, bg=APP_BG)
+        footer.pack(fill="x", pady=(14, 0))
+        tk.Button(footer, text="Quitter", command=app.close, width=12).pack(anchor="w")
 
         app.player_name_entry.focus_set()
         app.root.bind("<Return>", app.on_main_menu_return)
         app.update_category_hint()
-
-    def _render_catalog_card(self, app, parent):
-        issue_lines = app._build_catalog_issue_lines()
-        has_issue = bool(issue_lines)
-        bg = WARNING_BG if has_issue else MUTED_BG
-        border = WARNING_COLOR if has_issue else ACCENT_BORDER
-        fg = WARNING_COLOR if has_issue else ACCENT_COLOR
-        ui = app.ui
-
-        card = ui.card(parent, bg=bg, border=border, padx=12, pady=12)
-        card.pack(fill="x", pady=(14, 0))
-        ui.label(
-            card,
-            text="Cockpit editorial",
-            bg=bg,
-            fg=fg,
-            font=("Arial", 10, "bold"),
-        ).pack(anchor="w")
-        ui.label(
-            card,
-            text=app._build_catalog_summary(),
-            bg=bg,
-            fg=TEXT_COLOR,
-            wraplength=340,
-            justify="left",
-        ).pack(anchor="w", fill="x", pady=(6, 0))
-        tk.Button(
-            card,
-            text="Ouvrir le cockpit",
-            command=app.show_editorial_cockpit_overlay,
-            width=20,
-        ).pack(anchor="w", pady=(10, 0))
-        if issue_lines:
-            ui.render_bullets(card, issue_lines, fg=fg, wraplength=320)
-
-    def _render_backup_card(self, app, parent):
-        ui = app.ui
-        card = ui.card(parent, bg="#f7f9fc", border="#d7deea", padx=12, pady=12)
-        card.pack(fill="x", pady=(14, 0))
-        ui.label(
-            card,
-            text="Sauvegarde locale",
-            bg="#f7f9fc",
-            fg=ACCENT_COLOR,
-            font=("Arial", 10, "bold"),
-        ).pack(anchor="w")
-        ui.label(
-            card,
-            text=(
-                "Exportez ou restaurez l'environnement local complet : base joueur, "
-                "historique, rotation, classement et packs locaux."
-            ),
-            bg="#f7f9fc",
-            fg=TEXT_COLOR,
-            wraplength=340,
-            justify="left",
-        ).pack(anchor="w", fill="x", pady=(6, 0))
-
-        actions = ui.frame(card, bg="#f7f9fc")
-        actions.pack(anchor="w", pady=(10, 0))
-        tk.Button(
-            actions,
-            text="Sauvegarder mes donnees",
-            command=app.export_local_data,
-            width=24,
-        ).pack(side="left", padx=(0, 8))
-        tk.Button(
-            actions,
-            text="Restaurer une sauvegarde",
-            command=app.import_local_data,
-            width=24,
-        ).pack(side="left")
 
     def _render_recent_players_section(self, app, parent, recent_players):
         ui = app.ui
@@ -289,12 +209,29 @@ class MainMenuScreen:
         ).pack(anchor="w", fill="x", pady=(6, 0))
         app.selected_exploration_mount = ui.frame(parent, bg=parent.cget("bg"))
         app.selected_exploration_mount.pack(fill="x")
-        self._render_catalog_card(app, parent)
-        self._render_backup_card(app, parent)
 
-    def _render_resume_panel(self, app, parent, dashboard, progression):
+    def _render_priority_panel(self, app, parent, action_plan):
         ui = app.ui
-        ui.section_title(parent, "Reprise rapide")
+        ui.section_title(parent, "Action prioritaire")
+        ui.render_surface_action_card(
+            parent,
+            action_plan.get("primary_action"),
+            command=app._get_action_callback(action_plan["primary_action"]["callback_id"]),
+            compact=True,
+        )
+        secondary_actions = action_plan.get("secondary_actions") or ()
+        if secondary_actions:
+            ui.section_title(parent, "Autres options")
+            ui.render_action_list(
+                parent,
+                secondary_actions,
+                command_resolver=app._get_action_callback,
+                compact=True,
+            )
+
+    def _render_player_context(self, app, parent, dashboard, progression, exploration_snapshot):
+        ui = app.ui
+        ui.section_title(parent, "Reperes joueur")
         ui.label(
             parent,
             text=app._build_player_summary(app.player),
@@ -307,7 +244,7 @@ class MainMenuScreen:
             ui.label(
                 parent,
                 text=(
-                    "Dernier reglage : "
+                    "Derniere manche : "
                     f"{format_category_name(latest_game['category'])} en {latest_game['difficulty']} "
                     f"({format_played_at(latest_game['played_at'])}, "
                     f"{'victoire' if latest_game['won'] else 'defaite'})."
@@ -317,35 +254,21 @@ class MainMenuScreen:
                 justify="left",
             ).pack(anchor="w", fill="x", pady=(8, 0))
 
-        personalized_recommendation = progression.get("personalized_recommendation")
-        if personalized_recommendation is not None:
-            ui.section_title(parent, "Manche recommandee")
-            ui.render_personalized_recommendation_card(
-                parent,
-                personalized_recommendation,
-                compact=True,
-            )
-
-        review_options = progression.get("review_options") or {}
-        failed_words_option = review_options.get("failed_words")
-        weak_pair_option = review_options.get("weak_pair")
-        if failed_words_option is not None or weak_pair_option is not None:
-            ui.section_title(parent, "Revision ciblee")
-            if failed_words_option is not None:
-                ui.render_review_option_card(
-                    parent,
-                    failed_words_option,
-                    compact=True,
-                    command=app.start_review_failed_words,
-                )
-            if weak_pair_option is not None:
-                ui.render_review_option_card(
-                    parent,
-                    weak_pair_option,
-                    compact=True,
-                    command=app.start_review_weak_pair,
-                )
-
+        mastery = progression["mastery"]
+        ui.section_title(parent, "Carte de maitrise")
+        ui.label(
+            parent,
+            text=(
+                f"Maitrise globale : {mastery['mastery_percent']} %. "
+                f"{mastery['mastered_pairs']}/{mastery['total_pairs']} paires maitrisees, "
+                f"{mastery['pairs_left_to_master']} restantes."
+            ),
+            fg=ACCENT_COLOR,
+            wraplength=330,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(0, 8))
+        ui.section_title(parent, "Exploration du catalogue")
+        ui.render_catalog_exploration_grid(parent, exploration_snapshot["grid"], compact=True)
         ui.section_title(parent, "Defis actifs")
         ui.render_challenge_cards(parent, progression.get("challenges", ()), limit=2, compact=True)
         ui.section_title(parent, "Objectifs actifs")
@@ -353,6 +276,16 @@ class MainMenuScreen:
 
     def _render_onboarding_panel(self, app, parent, exploration_snapshot):
         ui = app.ui
+        ui.section_title(parent, "Avant la premiere manche")
+        ui.render_bullets(
+            parent,
+            [
+                "Choisir un pseudo local ou recharger un profil recent.",
+                "Verifier le reglage categorie / difficulte deja affiche dans le formulaire.",
+                "Lancer la premiere manche puis laisser la priorisation guider la suite.",
+            ],
+            wraplength=320,
+        )
         ui.section_title(parent, "Exploration du catalogue")
         ui.label(
             parent,
@@ -361,81 +294,41 @@ class MainMenuScreen:
             wraplength=320,
             justify="left",
         ).pack(anchor="w", fill="x", pady=(0, 10))
-        ui.section_title(parent, "Parcours solo")
-        ui.render_bullets(
-            parent,
-            [
-                "Choisir ou recharger un profil local.",
-                "Lancer une manche avec un pool calibre par categorie et difficulte.",
-                "Lire ensuite le score, les defis du moment et la progression globale.",
-            ],
-            wraplength=320,
-        )
         ui.label(
             parent,
             text=(
-                "Le produit reste centre sur le solo local, mais l'accueil met maintenant en avant "
-                "la reprise, les recommandations et la profondeur deja calculee."
+                "La maintenance et les outils experts restent accessibles plus bas, "
+                "sans couper le parcours de jeu principal."
             ),
             fg=SUBTLE_TEXT,
             wraplength=320,
             justify="left",
-        ).pack(anchor="w", fill="x", pady=(12, 0))
+        ).pack(anchor="w", fill="x")
 
-    def _render_main_menu_actions(self, app, parent, dashboard, progression):
-        buttons = app.ui.frame(parent, bg=APP_BG)
-        buttons.pack(fill="x", pady=(16, 0))
-        tk.Button(buttons, text="Lancer une partie", command=app.start_game, width=18).pack(
-            side="left",
-            padx=(0, 8),
+    def _render_utility_zone(self, app, parent, action_plan):
+        ui = app.ui
+        utility = ui.card(parent, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
+        utility.pack(fill="x", pady=(16, 0))
+        ui.section_title(utility, "Utilitaires")
+        ui.label(
+            utility,
+            text=(
+                "Profil, classement et maintenance restent accessibles ici, hors de la boucle "
+                "principale comprendre -> lancer -> progresser."
+            ),
+            fg=SUBTLE_TEXT,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(0, 8))
+        ui.label(
+            utility,
+            text=app._build_catalog_summary(),
+            fg=ACCENT_COLOR,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(0, 8))
+        ui.render_utility_actions(
+            utility,
+            action_plan.get("utility_actions"),
+            command_resolver=app._get_action_callback,
         )
-        if dashboard is not None and app._get_latest_game(dashboard) is not None:
-            tk.Button(
-                buttons,
-                text="Reprendre dernier reglage",
-                command=app.start_last_selection,
-                width=24,
-            ).pack(side="left", padx=(0, 8))
-        personalized_recommendation = (
-            progression.get("personalized_recommendation") if progression is not None else None
-        )
-        if (
-            personalized_recommendation is not None
-            and personalized_recommendation.get("category")
-            and personalized_recommendation.get("difficulty")
-        ):
-            tk.Button(
-                buttons,
-                text="Jouer la reco",
-                command=app.start_personalized_recommendation,
-                width=16,
-            ).pack(side="left", padx=(0, 8))
-        if progression is not None and progression.get("featured_challenge") is not None:
-            tk.Button(
-                buttons,
-                text="Session defi",
-                command=app.start_guided_featured_challenge_session,
-                width=16,
-            ).pack(side="left", padx=(0, 8))
-        if progression is not None and progression.get("primary_goal") is not None:
-            tk.Button(
-                buttons,
-                text="Session objectif",
-                command=app.start_guided_primary_goal_session,
-                width=18,
-            ).pack(side="left", padx=(0, 8))
-        tk.Button(buttons, text="Profil", command=app.open_player_dashboard, width=14).pack(
-            side="left",
-            padx=(0, 8),
-        )
-        tk.Button(buttons, text="Classement", command=app.show_leaderboard, width=14).pack(
-            side="left",
-            padx=(0, 8),
-        )
-        tk.Button(
-            buttons,
-            text="Cockpit editorial",
-            command=app.show_editorial_cockpit_overlay,
-            width=20,
-        ).pack(side="left", padx=(0, 8))
-        tk.Button(buttons, text="Quitter", command=app.close, width=12).pack(side="left")

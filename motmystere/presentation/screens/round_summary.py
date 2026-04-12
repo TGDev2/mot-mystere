@@ -33,6 +33,7 @@ class RoundSummaryScreen:
         catalog_rotation=None,
         guided_progress=None,
         guided_recommendation=None,
+        surface_action_plan=None,
     ):
         app.clear_screen()
         tone_bg = SUCCESS_BG if title == "Victoire" else WARNING_BG if title == "Temps ecoule" else ERROR_BG
@@ -236,51 +237,12 @@ class RoundSummaryScreen:
                     justify="left",
                 ).pack(anchor="w", fill="x", pady=(4, 0))
 
-        personalized_recommendation = (
-            progression_snapshot.get("personalized_recommendation")
-            if progression_snapshot is not None and guided_progress is None
-            else None
+        active_action_plan = (
+            self._build_guided_follow_up_plan(surface_action_plan, guided_progress, guided_recommendation)
+            if guided_progress is not None
+            else surface_action_plan
         )
-        if personalized_recommendation is not None:
-            recommendation_area = ui.card(container, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
-            recommendation_area.pack(fill="x", pady=(14, 0))
-            ui.section_title(recommendation_area, "Manche recommandee")
-            ui.render_personalized_recommendation_card(
-                recommendation_area,
-                personalized_recommendation,
-            )
-
-        review_options = progression_snapshot.get("review_options") if progression_snapshot is not None else None
-        if (
-            guided_progress is None
-            and title != "Victoire"
-            and review_options is not None
-            and (review_options.get("failed_words") is not None or review_options.get("weak_pair") is not None)
-        ):
-            review_area = ui.card(container, bg="#fff7e8", border="#ebd29a", padx=18, pady=18)
-            review_area.pack(fill="x", pady=(14, 0))
-            ui.section_title(review_area, "Revision ciblee")
-            ui.label(
-                review_area,
-                text=(
-                    "Transformez cette defaite en entrainement concret sans toucher a la rotation normale."
-                ),
-                fg=WARNING_COLOR,
-                wraplength=760,
-                justify="left",
-            ).pack(anchor="w", fill="x")
-            if review_options.get("failed_words") is not None:
-                ui.render_review_option_card(
-                    review_area,
-                    review_options["failed_words"],
-                    command=app.start_review_failed_words,
-                )
-            if review_options.get("weak_pair") is not None:
-                ui.render_review_option_card(
-                    review_area,
-                    review_options["weak_pair"],
-                    command=app.start_review_weak_pair,
-                )
+        self._render_follow_up_actions(app, container, active_action_plan)
 
         if progression_snapshot is not None:
             goal_area = ui.card(container, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
@@ -330,70 +292,101 @@ class RoundSummaryScreen:
             ui.section_title(goal_area, "Objectifs actifs")
             ui.render_goal_cards(goal_area, progression_snapshot["goals"], limit=3)
 
-        buttons = ui.frame(container, bg=APP_BG)
-        buttons.pack(fill="x", pady=(16, 0))
-
-        if guided_progress is not None:
-            tk.Button(
-                buttons,
-                text="Continuer la session",
-                command=app._continue_guided_session,
-                width=24,
-            ).pack(side="left", padx=(0, 8))
-            tk.Button(
-                buttons,
-                text="Arreter la session",
-                command=app._stop_guided_session_after_round,
-                width=20,
-            ).pack(side="left", padx=(0, 8))
-        else:
-            if (
-                personalized_recommendation is not None
-                and personalized_recommendation.get("category")
-                and personalized_recommendation.get("difficulty")
-            ):
-                tk.Button(
-                    buttons,
-                    text="Jouer la reco",
-                    command=app.start_personalized_recommendation,
-                    width=16,
-                ).pack(side="left", padx=(0, 8))
-            tk.Button(
-                buttons,
-                text="Rejouer meme reglage",
-                command=app.replay_current_selection,
-                width=20,
-            ).pack(side="left", padx=(0, 8))
-            if progression_snapshot is not None and progression_snapshot.get("primary_goal") is not None:
-                app.progression_snapshot = progression_snapshot
-                tk.Button(
-                    buttons,
-                    text="Session objectif",
-                    command=app.start_guided_primary_goal_session,
-                    width=18,
-                ).pack(side="left", padx=(0, 8))
-            tk.Button(
-                buttons,
-                text="Changer categorie",
-                command=app.return_to_menu,
-                width=18,
-            ).pack(side="left", padx=(0, 8))
-        tk.Button(buttons, text="Profil", command=app.open_player_dashboard, width=14).pack(
-            side="left",
-            padx=(0, 8),
-        )
-        tk.Button(buttons, text="Classement", command=app.show_leaderboard, width=14).pack(
-            side="left"
-        )
+        self._render_utility_zone(app, container, active_action_plan)
 
         footer = ui.frame(container, bg=APP_BG)
         footer.pack(fill="x", pady=(14, 0))
         tk.Button(footer, text="Quitter", command=app.close, width=12).pack()
 
-        if guided_progress is not None:
-            app.root.bind("<Return>", lambda _event: app._continue_guided_session())
+        primary_action = (active_action_plan or {}).get("primary_action")
+        if primary_action is not None:
+            primary_command = app._get_action_callback(primary_action["callback_id"])
+            app.root.bind("<Return>", lambda _event, command=primary_command: command())
         else:
-            app.root.bind("<Return>", lambda _event: app.replay_current_selection())
+            app.root.bind("<Return>", lambda _event: app.return_to_menu())
+
+    def _build_guided_follow_up_plan(self, surface_action_plan, guided_progress, guided_recommendation):
+        reason_line = guided_progress.get("detail", "")
+        if guided_recommendation is not None:
+            if guided_recommendation.get("category") and guided_recommendation.get("difficulty"):
+                reason_line = (
+                    f"Prochaine manche : {format_category_name(guided_recommendation['category'])} "
+                    f"en {guided_recommendation['difficulty']}. {guided_recommendation['detail']}"
+                )
+            else:
+                reason_line = guided_recommendation.get("detail", reason_line)
+
+        return {
+            "primary_action": {
+                "kind": "continue_guided_session",
+                "label": guided_progress.get("mode_label", "Session guidee"),
+                "title": "Continuer la session",
+                "reason_line": reason_line,
+                "callback_id": "continue_guided_session",
+                "cta_text": "Continuer la session",
+                "enabled": True,
+            },
+            "secondary_actions": [
+                {
+                    "kind": "stop_guided_session_after_round",
+                    "label": guided_progress.get("mode_label", "Session guidee"),
+                    "title": "Arreter la session",
+                    "reason_line": "Coupez la session guidee et revenez ensuite a l'accueil.",
+                    "callback_id": "stop_guided_session_after_round",
+                    "cta_text": "Arreter la session",
+                    "enabled": True,
+                }
+            ],
+            "utility_actions": (surface_action_plan or {}).get("utility_actions", []),
+        }
+
+    def _render_follow_up_actions(self, app, parent, action_plan):
+        if action_plan is None or action_plan.get("primary_action") is None:
+            return
+
+        ui = app.ui
+        card = ui.card(parent, bg=CARD_BG, border=ACCENT_BORDER, padx=18, pady=18)
+        card.pack(fill="x", pady=(14, 0))
+        ui.section_title(card, "Et maintenant")
+        primary_action = action_plan["primary_action"]
+        ui.render_surface_action_card(
+            card,
+            primary_action,
+            command=app._get_action_callback(primary_action["callback_id"]),
+        )
+        secondary_actions = action_plan.get("secondary_actions") or ()
+        if secondary_actions:
+            ui.section_title(card, "Autres options")
+            ui.render_action_list(
+                card,
+                secondary_actions,
+                command_resolver=app._get_action_callback,
+            )
+
+    def _render_utility_zone(self, app, parent, action_plan):
+        utility_actions = (action_plan or {}).get("utility_actions") or ()
+        if not utility_actions:
+            return
+
+        ui = app.ui
+        utility = ui.card(parent, bg=MUTED_BG, border="#d7d0c1", padx=18, pady=18)
+        utility.pack(fill="x", pady=(14, 0))
+        ui.section_title(utility, "Utilitaires")
+        ui.label(
+            utility,
+            text=(
+                "Profil, classement et maintenance restent accessibles ici sans reprendre la main "
+                "sur la suite jouee."
+            ),
+            fg=SUBTLE_TEXT,
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(0, 8))
+        ui.render_utility_actions(
+            utility,
+            utility_actions,
+            command_resolver=app._get_action_callback,
+        )
 
     def render_guided_session_summary(self, app):
         if app.guided_session is None:

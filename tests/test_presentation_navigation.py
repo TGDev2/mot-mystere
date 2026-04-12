@@ -52,6 +52,7 @@ class PresentationNavigationTestCase(unittest.TestCase):
             [],
             [],
             None,
+            surface_action_plan={"primary_action": {"callback_id": "start_personalized_recommendation"}},
         )
         app.show_player_dashboard(7)
         app.show_leaderboard()
@@ -85,6 +86,9 @@ class PresentationNavigationTestCase(unittest.TestCase):
                         "catalog_rotation": None,
                         "guided_progress": None,
                         "guided_recommendation": None,
+                        "surface_action_plan": {
+                            "primary_action": {"callback_id": "start_personalized_recommendation"}
+                        },
                     },
                 ),
                 ("overlay", PLAYER_DASHBOARD_OVERLAY, {"player_id": 7}),

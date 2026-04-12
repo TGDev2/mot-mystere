@@ -346,6 +346,134 @@ class PresentationShell:
                 font=("Arial", 14, "bold"),
             ).pack(anchor="w", pady=(2, 0))
 
+    def render_surface_action_card(
+        self,
+        parent,
+        action,
+        *,
+        command=None,
+        compact=False,
+    ):
+        if action is None:
+            return None
+
+        bg, border, accent = self._get_action_style(action, primary=True)
+        wraplength = 320 if compact else 760
+        card = self.card(parent, bg=bg, border=border, padx=16, pady=16)
+        card.pack(fill="x", pady=(6, 0))
+        self.label(
+            card,
+            text=action.get("label", "Action prioritaire"),
+            bg=bg,
+            fg=accent,
+            font=("Arial", 9, "bold"),
+        ).pack(anchor="w")
+        self.label(
+            card,
+            text=action["title"],
+            bg=bg,
+            font=("Arial", 12, "bold"),
+            wraplength=wraplength,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(2, 2))
+        if action.get("reason_line"):
+            self.label(
+                card,
+                text=action["reason_line"],
+                bg=bg,
+                fg=SUBTLE_TEXT,
+                wraplength=wraplength,
+                justify="left",
+            ).pack(anchor="w", fill="x")
+        if command is not None:
+            tk.Button(
+                card,
+                text=action.get("cta_text") or action["title"],
+                command=command,
+                state=tk.NORMAL if action.get("enabled", True) else tk.DISABLED,
+                width=18 if compact else 22,
+            ).pack(anchor="w", pady=(10, 0))
+        return card
+
+    def render_action_list(
+        self,
+        parent,
+        actions,
+        *,
+        command_resolver=None,
+        compact=False,
+    ):
+        for action in actions or ():
+            bg, border, accent = self._get_action_style(action, primary=False)
+            wraplength = 320 if compact else 760
+            card = self.card(parent, bg=bg, border=border, padx=14, pady=14)
+            card.pack(fill="x", pady=(6, 0))
+            self.label(
+                card,
+                text=action.get("label", "Autre option"),
+                bg=bg,
+                fg=accent,
+                font=("Arial", 9, "bold"),
+            ).pack(anchor="w")
+            self.label(
+                card,
+                text=action["title"],
+                bg=bg,
+                font=("Arial", 11, "bold"),
+                wraplength=wraplength,
+                justify="left",
+            ).pack(anchor="w", fill="x", pady=(2, 2))
+            if action.get("reason_line"):
+                self.label(
+                    card,
+                    text=action["reason_line"],
+                    bg=bg,
+                    fg=SUBTLE_TEXT,
+                    wraplength=wraplength,
+                    justify="left",
+                ).pack(anchor="w", fill="x")
+            if command_resolver is not None:
+                tk.Button(
+                    card,
+                    text=action.get("cta_text") or action["title"],
+                    command=command_resolver(action["callback_id"]),
+                    state=tk.NORMAL if action.get("enabled", True) else tk.DISABLED,
+                    width=18 if compact else 22,
+                ).pack(anchor="w", pady=(10, 0))
+
+    def render_utility_actions(
+        self,
+        parent,
+        actions,
+        *,
+        command_resolver=None,
+        compact=False,
+    ):
+        if not actions:
+            return None
+
+        grid = self.frame(parent, bg=parent.cget("bg"))
+        grid.pack(fill="x")
+        columns = 3
+        for index, action in enumerate(actions):
+            button = tk.Button(
+                grid,
+                text=action.get("cta_text") or action["title"],
+                command=command_resolver(action["callback_id"]) if command_resolver is not None else None,
+                state=tk.NORMAL if action.get("enabled", True) else tk.DISABLED,
+                width=20 if compact else 22,
+            )
+            button.grid(
+                row=index // columns,
+                column=index % columns,
+                padx=(0, 8),
+                pady=4,
+                sticky="ew",
+            )
+        for column in range(columns):
+            grid.grid_columnconfigure(column, weight=1)
+        return grid
+
     def render_mastery_grid(self, parent, mastery, *, compact=False):
         if mastery is None:
             return
@@ -545,3 +673,23 @@ class PresentationShell:
         if state == "unavailable":
             return MUTED_BG, SUBTLE_TEXT, "#d7d0c1"
         return CARD_BG, ACCENT_BORDER, ACCENT_COLOR
+
+    def _get_action_style(self, action, *, primary=False):
+        kind = (action or {}).get("kind")
+        if kind in {"review_failed_words", "review_weak_pair"}:
+            return "#fff7e8", "#ebd29a", WARNING_COLOR
+        if kind in {
+            "personalized_recommendation",
+            "start_game",
+            "last_selection",
+            "replay_current_selection",
+            "continue_guided_session",
+        }:
+            return "#eef6ff", "#c8d9f1", ACCENT_COLOR
+        if kind in {"primary_goal_session", "featured_challenge_session"}:
+            return "#f7f9fc", "#d7deea", ACCENT_COLOR
+        if kind in {"return_to_menu", "stop_guided_session_after_round"}:
+            return MUTED_BG, "#d7d0c1", SUBTLE_TEXT
+        if primary:
+            return CARD_BG, ACCENT_BORDER, ACCENT_COLOR
+        return "#f7f9fc", "#d7deea", ACCENT_COLOR

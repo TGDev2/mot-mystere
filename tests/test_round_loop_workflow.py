@@ -90,6 +90,11 @@ class RoundLoopWorkflowTestCase(unittest.TestCase):
         app.letter_buttons = {"A": StubButton()}
         app.progress_var = StubVar("")
         app.progression_snapshot = None
+        app._build_surface_action_plan = lambda dashboard, snapshot, *, surface, round_result=None: {
+            "surface": surface,
+            "round_result": round_result,
+            "primary_action": {"callback_id": "start_personalized_recommendation"},
+        }
 
         calls = []
         app.cancel_timer = lambda: calls.append("cancel")
@@ -127,6 +132,14 @@ class RoundLoopWorkflowTestCase(unittest.TestCase):
             {
                 "before": {"label": "avant", "state_label": "1/3", "progress_text": "1/3"},
                 "after": {"label": "apres", "state_label": "2/3", "progress_text": "2/3"},
+            },
+        )
+        self.assertEqual(
+            summary_call[2]["surface_action_plan"],
+            {
+                "surface": "round_summary",
+                "round_result": "won",
+                "primary_action": {"callback_id": "start_personalized_recommendation"},
             },
         )
 
