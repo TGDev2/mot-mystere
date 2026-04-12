@@ -2,92 +2,143 @@
 
 ## Objectif
 
-La couche presentation est decoupee pour isoler quatre responsabilites:
+La couche presentation est decoupee pour separer:
 
-- `motmystere/game_logic.py` compose l'application et expose une facade stable aux ecrans.
-- `motmystere/presentation/navigation.py` formalise les routes d'ecran et d'overlay, avec un routeur testable.
-- `motmystere/presentation/screens/` contient un module par ecran cle ou overlay.
-- `motmystere/workflows/` porte les workflows applicatifs par responsabilite.
+- la composition applicative ;
+- la navigation ;
+- les ecrans et overlays ;
+- les workflows ;
+- les briques UI partagees.
 
-## Decoupage
+Le but est de faire evoluer la presentation sans re-concentrer la logique dans `game_logic.py`.
 
-### Orchestrateur
+## Composition generale
 
-`HangmanApp` conserve:
+`motmystere/game_logic.py` contient `HangmanApp`, qui assemble:
 
-- le bootstrap Tkinter, les `StringVar` et les references d'ecrans/overlays ;
-- le routeur de presentation ;
-- la facade publique appelee par les ecrans (`start_game`, `finish_round`, `return_to_menu`, `show_catalog_overlay`, etc.).
+- la fenetre Tkinter ;
+- les `StringVar` et references de widgets ;
+- les services (`CatalogService`, `BackupService`) ;
+- les workflows ;
+- le `PresentationRouter` ;
+- les objets ecran.
 
-Il ne porte plus directement la logique complete des workflows catalogue, backup, manche et session guidee.
+`HangmanApp` reste la facade appelee par l'UI, mais delegue la logique detaillee aux workflows.
 
-### Workflows applicatifs
+## Navigation
 
-`motmystere/workflows/` regroupe les flux majeurs:
-
-- `catalog.py` : reload du catalogue, preview/import de packs, toggles et bundles editoriaux.
-- `backup.py` : export/import de sauvegarde et rehydratation de l'environnement apres restauration.
-- `round_loop.py` : creation de manche, saisie, timer, resolution et routage de fin de manche.
-- `guided_session.py` : demarrage, continuation, cloture et evaluation des sessions guidees/revisions.
-
-Deux supports transverses restent internes a cette couche:
-
-- `selection_support.py` : selection categorie/difficulte, sync apres reload et snapshots d'exploration.
-- `player_progression_support.py` : chargement joueur, progression, recent players et resume profil.
-
-Les appels side-effect UI sont encapsules par `ports.py` pour isoler:
-
-- dialogues et selecteurs de fichiers ;
-- timer Tkinter.
-
-### Shell UI partage
-
-`motmystere/presentation/shell.py` centralise les briques de rendu reutilisables:
-
-- cartes, labels, sections ;
-- cartes de progression et defis ;
-- grille de maitrise ;
-- cartes de metriques.
-
-Une evolution visuelle transverse passe par ce shell, pas par chaque ecran.
+La navigation est formalisee dans `motmystere/presentation/navigation.py`.
 
 ### Ecrans
-
-Les ecrans sont isoles dans `motmystere/presentation/screens/`:
-
-- `main_menu.py` : accueil, reprise rapide, formulaire de lancement.
-- `game_round.py` : manche en cours.
-- `round_summary.py` : fin de manche et resume de session guidee.
-- `player_dashboard.py` : overlay profil.
-- `leaderboard.py` : overlay classement.
-- `catalog.py` : overlay de gestion du catalogue et des packs locaux.
-
-Chaque module ne gere que sa composition visuelle et les callbacks qu'il expose.
-
-## Contrat de navigation
-
-Les routes explicites sont definies dans `motmystere/presentation/navigation.py`:
 
 - `main_menu`
 - `round`
 - `round_summary`
 - `guided_session_summary`
+
+### Overlays
+
 - `player_dashboard`
 - `leaderboard`
 - `catalog`
+- `editorial_cockpit`
+- `difficulty_calibration`
 
-Le parcours critique attendu est:
+Le routeur enregistre un historique de `NavigationEvent`, ce qui permet de verifier le contrat de navigation sans lancer tout le rendu.
+
+## Ecrans et overlays
+
+Les composants d'ecran sont isoles dans `motmystere/presentation/screens/`.
+
+- `main_menu.py`
+  Accueil, formulaire de lancement, profils recents, actions prioritaires.
+
+- `game_round.py`
+  Manche en cours, clavier, timer, hints et suivi de progression.
+
+- `round_summary.py`
+  Resume de manche et resume de session guidee ou revision ciblee.
+
+- `player_dashboard.py`
+  Profil joueur detaille.
+
+- `leaderboard.py`
+  Classement local.
+
+- `catalog.py`
+  Gestion des packs, preview d'import et alertes catalogue.
+
+- `editorial_cockpit.py`
+  Vue de priorisation editoriale par pack et categorie.
+
+- `difficulty_calibration.py`
+  Vue technique de calibration des paires categorie/niveau.
+
+Chaque module de `screens/` se limite a:
+
+- composer les widgets ;
+- afficher des donnees deja preparees ;
+- relier les callbacks exposes par `HangmanApp`.
+
+## Shell UI partage
+
+`motmystere/presentation/shell.py` centralise les briques de rendu reutilisables:
+
+- cartes ;
+- sections ;
+- metriques ;
+- cartes de progression ;
+- grille de maitrise ;
+- cartes de rotation et d'exploration.
+
+Une evolution visuelle transverse doit passer par ce shell, pas par duplication dans plusieurs ecrans.
+
+## Workflows relies a la presentation
+
+La presentation est pilotee par les workflows de `motmystere/workflows/`.
+
+- `round_loop.py`
+  Flux de manche, timer, frappes clavier et resolution.
+
+- `guided_session.py`
+  Sessions guidees et revisions avant/apres manche.
+
+- `catalog.py`
+  Overlay catalogue, refresh, import, toggle et bundles editoriaux.
+
+- `backup.py`
+  Export/restauration et rehydratation de l'UI apres restauration.
+
+- `player_progression_support.py`
+  Chargement joueur, profils recents et progression.
+
+- `selection_support.py`
+  Synchronisation categorie/difficulte et hints catalogue.
+
+Les appels a `messagebox`, `filedialog` et `after()` sont encapsules par `ports.py` pour rester testables.
+
+## Contrat de navigation attendu
+
+Le parcours critique minimal reste:
 
 1. `main_menu`
 2. `round`
 3. `round_summary`
-4. `player_dashboard` ou `leaderboard`
 
-Ce contrat est verifie automatiquement dans [tests/test_presentation_navigation.py](/c:/Users/DIEUTAXI/Documents/Projects/MotMystere/MotMystere/tests/test_presentation_navigation.py).
+Selon le contexte, le flux peut ensuite ouvrir:
+
+- `guided_session_summary`
+- `player_dashboard`
+- `leaderboard`
+- `catalog`
+- `editorial_cockpit`
+- `difficulty_calibration`
+
+Ce contrat est verifie par [`tests/test_presentation_navigation.py`](../tests/test_presentation_navigation.py).
 
 ## Impact attendu pour les evolutions
 
-- Faire evoluer un ecran cible ne demande plus de retoucher le layout des autres.
-- La navigation est observable et testable sans lancer toute l'interface Tkinter.
-- Faire evoluer un workflow majeur n'impose plus de concentrer les changements dans `game_logic.py`.
-- Les composants visuels partages restent dans un point unique, ce qui limite les regressions de style et de structure.
+- Faire evoluer un ecran cible ne demande plus de retoucher tous les autres.
+- La navigation est observable et testable.
+- Les side effects Tkinter sont limites et mieux encapsules.
+- Les refactorings de logique applicative n'imposent plus de grossir `HangmanApp`.
